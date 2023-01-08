@@ -8,8 +8,8 @@ from aiogram.dispatcher import FSMContext
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.dispatcher.handler import CancelHandler, current_handler
-from aiogram.utils import markdown
+from aiogram.dispatcher.handler import CancelHandler
+#from aiogram.utils import markdown
 
 import requests
 from io import BytesIO
@@ -19,6 +19,28 @@ from transmission_rpc import Client as TransmissionClient
 from shutil import rmtree
 import os
 import psutil
+import inspect
+
+file_types = {
+    'video' : {
+        'extension' : ['avi', 'mkv', 'mp4', 'm4v', 'mov', 'bdmv', 'vob'],
+        'icon' : '🎬'
+    },
+    'music' :{
+        'extension' : ['mp3', 'wav', 'm3u', 'ogg'],
+        'icon' : '🎧'
+    },
+    'other' : {
+        'extension' : [],
+        'icon' : '📄'
+    }
+}
+
+def get_ext_icon(ext):
+    for tp in file_types:
+        if ext.lower() in file_types[tp]['extension']:
+            return file_types[tp]['icon']
+    return file_types['other']['icon']
 
 # you must create 'settings.json' file based on this example:  
 settings = {
@@ -58,15 +80,42 @@ def sizeof_fmt(num, suffix="B"):
         num /= 1024.0
     return f"{num:.1f}Yi{suffix}"
 
-def get_entry_size(entry):
-    if entry.is_dir():
-        sum_size = 0
-        with os.scandir(entry.path) as dir_iter:
-            for el in dir_iter:
-                sum_size += get_entry_size(el)
-        return sum_size
-    else:
-        return entry.stat().st_size
+def get_file_ext(file_name):
+    i = file_name.rfind('.')
+    if i != -1: return (file_name[i+1:].lower())
+    return None
+
+class ExtCounter():
+    def __init__(self):
+        self.all_ext = {}
+        self.max_ext_count = 0
+        self.max_ext = ''
+    
+    def push(self, ext):
+        self.all_ext[ext] = self.all_ext[ext] + 1 if ext in self.all_ext else 1
+        if self.max_ext_count < self.all_ext[ext]: 
+            self.max_ext_count = self.all_ext[ext]
+            self.max_ext = ext    
+
+
+def get_dir_stats(entry):
+    ext_counter = ExtCounter()
+    sum_size = 0
+    
+    def recurse(entry):
+        nonlocal sum_size, ext_counter
+        if entry.is_dir():
+            with os.scandir(entry.path) as dir_iter:
+                for el in dir_iter:
+                    recurse(el)
+        else:
+            sum_size += entry.stat().st_size
+            ext = get_file_ext(entry.name)
+            ext_counter.push(ext)
+        
+    recurse(entry)
+    return { 'ext' : ext_counter.max_ext, 'size' : sum_size }
+
 
 def setup_tracker_buttons(setup_map):
     indexers = get_configured_jackett_indexers()
@@ -86,10 +135,10 @@ dp = Dispatcher(bot, storage = MemoryStorage())
 
 async def setup_bot_commands(dp):
     await dp.bot.set_my_commands([
-        types.BotCommand('list', 'Torrent list'),
-        types.BotCommand('find', 'Find torrents'),
-        types.BotCommand('ls', 'List storage'),
-        types.BotCommand('setup', 'Setup settings')
+        types.BotCommand('find',  'Find torrents'),
+        types.BotCommand('list',  'List torrents'),
+        types.BotCommand('ls',    'List storage'),
+        types.BotCommand('setup', 'Settings setup')
     ])
 
 class Setup(StatesGroup):
@@ -110,76 +159,141 @@ class LsState(StatesGroup):
     select_action = State()
 
 
-class ItemsList():
+class AbstractItemsList():
 
-    def __init__(self, filter_key : str = None ) -> None:
-        self.filter_key = filter_key
+    def __init__(self) -> None:
         self.items_list = []
-        self.filter = set()
         self.page_num = 0
         self.items_on_page = 5
         self.selected_index = -1
         self.selected_item = None
         self.from_index = -1
         self.to_index = -1
+        self._reply_hash = -1
 
-    @property
-    def items(self):  
-        return [item for item in self.items_list if (len(self.filter) == 0) or (len(self.filter) > 0 and item[self.filter_key] in self.filter)]
+    def reload(self):
+        raise NotImplementedError()
 
     #@items.setter
     #def items(self, items_list : list):  
     #    self.items_list = items_list 
 
-    def classify(self, key):
-        cls = []
-        for item in self.items_list:
-            if not item[key] in cls:
-                cls.append(item[key])
-        return cls
+    @property
+    def items(self):  
+        return self.items_list
 
     def get_item_str(self) -> str:
         raise NotImplementedError()
 
     def get_header_str(self) -> str:
-        return '<b>Results: ' + str(self.from_index) + '-' + str(self.to_index - 1) + ' из ' + str(len(self.items)-1) + '</b>\n'
+        return '<b>results: ' + str(self.from_index) + '-' + str(self.to_index - 1) + ' of ' + str(len(self.items)-1) + '</b>'
+
+    def get_footer_str(self) -> str:
+        #raise NotImplementedError()
+        return ''
 
     def get_selected_str(self) -> str:
         return self.get_item_str(self.selected_index)
     
-    def check_page_bounds(self, page_n):
+    def check_page_bounds(self, page_n) -> bool:
         if page_n < 0: return False
         if page_n * self.items_on_page >= len(self.items): return False
         return True
     
-    def set_page_bounds(self):
+    def set_page_bounds(self) -> bool:
         max_items = len(self.items)
         self.from_index = self.page_num * self.items_on_page
         self.to_index = self.from_index + self.items_on_page
         if self.to_index > max_items: self.to_index = max_items
     
-    def next_page(self):
+    def next_page(self) -> bool:
         if self.check_page_bounds(self.page_num + 1): 
             self.page_num += 1
             return True
         return False
 
-    def prev_page(self):
+    def prev_page(self) -> bool:
         if self.check_page_bounds(self.page_num - 1): 
             self.page_num -= 1
             return True
         return False
 
     def text_and_buttons(self) -> tuple[str, types.InlineKeyboardMarkup]:
+        hr = '\n<b>⸻⸻⸻</b>\n'
         self.set_page_bounds()
         keyboard_markup = types.InlineKeyboardMarkup(row_width = 3)
 
         row_btns = []
-        text = self.get_header_str()
+        text = self.get_header_str() + hr
         for i in range(self.from_index, self.to_index):
-            text = text + self.get_item_str(i) + '\n'
+            text = text + ('\n' if i > self.from_index else '') + self.get_item_str(i) + ('\n' if i < self.to_index -1 else '')
             row_btns.append( types.InlineKeyboardButton(text = str(i), callback_data = str(i)) )
-        keyboard_markup.row(*row_btns)
+        footer_str = self.get_footer_str()
+        if footer_str: text = text + hr + footer_str
+        keyboard_markup.row(*row_btns) # numbered buttons
+
+        btn_data = {'prev_page': '⬅', 'next_page': '➡', 'reload': '🔁', 'dummy': '-'}
+        btn = { key: types.InlineKeyboardButton(text = btn_data[key], callback_data = key) for key in btn_data }
+
+        keyboard_markup.row( # control buttons
+            btn['prev_page'] if self.page_num > 0 else btn['dummy'],
+            # reload active only when implemented in subclass
+            btn['reload'] if getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload') else btn['dummy'],
+            btn['next_page'] if self.page_num + 1 < (len(self.items) / self.items_on_page) else btn['dummy']
+        )
+        return text, keyboard_markup
+
+    async def answer_message(self, message: types.Message):
+        text, keyboard_markup = self.text_and_buttons()
+        self._reply_hash = hash(text)
+        await message.answer(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
+
+    async def edit_text(self, query: types.CallbackQuery):
+        text, keyboard_markup = self.text_and_buttons()
+        _hash = hash(text)
+        if self._reply_hash != _hash:
+            self._reply_hash = _hash
+            await query.message.edit_text(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
+
+    async def handle_callback(self, query: types.CallbackQuery):
+        await query.answer(query.data)
+        if query.data in ['next_page', 'prev_page', 'reload']: 
+            getattr(self, query.data)() # call proper method
+        elif query.data.isdigit():
+            self.selected_index = int(query.data)
+            self.selected_item = self.items[self.selected_index]
+        await self.edit_text(query)
+
+
+class FileDirList(AbstractItemsList):
+
+    def __init__(self, filter_key : str = None) -> None:
+        super().__init__()
+        self.filter_key = filter_key
+        self.filter = set()
+
+    @property
+    def items(self):  
+        return [item for item in self.items_list if (len(self.filter) == 0) or (len(self.filter) > 0 and item[self.filter_key] in self.filter)]
+
+    def get_icon(self, item) -> str: 
+        # list item must have: { 'is_dir' : bool, 'ext' : str }
+        if item['is_dir']:
+            if 'ext' in item:
+                return '📁' + get_ext_icon(item['ext'])
+            return '📁'
+        return get_ext_icon( get_file_ext(item['name']) )
+
+    def classify(self, key) -> list:
+        # classify items by key
+        cls = []
+        for item in self.items_list:
+            if not item[key] in cls:
+                cls.append(item[key])
+        return cls
+
+    def text_and_buttons(self) -> tuple[str, types.InlineKeyboardMarkup]:
+        text, keyboard_markup = super().text_and_buttons()
 
         if self.filter_key:
             keyboard_markup.row(*[
@@ -189,51 +303,23 @@ class ItemsList():
                 ) for key in self.classify(self.filter_key)
             ])
 
-        btn_data = {'prev': '⬅', 'next': '➡', 'cancel': '❌', 'dummy': '-'}
-        btn = { key: types.InlineKeyboardButton(text = btn_data[key], callback_data = key) for key in btn_data }
-
-        keyboard_markup.row(
-            btn['prev'] if self.page_num > 0 else btn['dummy'],
-            btn['cancel'],
-            btn['next'] if self.page_num + 1 < (len(self.items) / self.items_on_page) else btn['dummy']
-        )
-
         return text, keyboard_markup
 
-    async def answer_message(self, message: types.Message):
-        text, keyboard_markup = self.text_and_buttons()
-        await message.answer(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
-
-    async def handle_callback(self, query: types.CallbackQuery, state: FSMContext):
-        
-        if query.data == 'next':
-            if self.next_page():
-                text, keyboard_markup = self.text_and_buttons()
-                await query.message.edit_text(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
-
-        elif query.data == 'prev':
-            if self.prev_page():
-                text, keyboard_markup = self.text_and_buttons()
-                await query.message.edit_text(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
-
-        elif query.data == 'cancel':
-            await state.finish()
-            await query.message.answer('cancelled', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
-
-        elif query.data.isdigit():
-            self.selected_index = int(query.data)
-            self.selected_item = self.items[self.selected_index]
-
-        elif query.data[:7] == 'filter:':
+    async def handle_callback(self, query: types.CallbackQuery):
+        await super().handle_callback(query)
+        if query.data[:7] == 'filter:':
+            self.page_num = 0
             self.filter = self.filter ^ set({query.data[7:]})
-            text, keyboard_markup = self.text_and_buttons()
-            await query.message.edit_text(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
+            await self.edit_text(query)
             #await bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
 
-class FindList(ItemsList):
+
+
+
+class FindList(AbstractItemsList):
     
-    def __init__(self, filter_key : str = None, query_string = str, trackers = set) -> None:
-        super().__init__(filter_key)
+    def __init__(self, query_string = str, trackers = set) -> None:
+        super().__init__()
         params = {
             'apikey': settings['jackett']['api_key'], 
             'Query' : query_string, 
@@ -258,34 +344,46 @@ class FindList(ItemsList):
            # '[' + ('' if item['Link'] is None else 'L') + \
            # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
-class ListList(ItemsList):
+class ListList(FileDirList):
 
     def __init__(self, filter_key : str = None ) -> None:
         super().__init__(filter_key)
+        self.reload()
+
+    def reload(self):
         torrents = transmission.get_torrents()
         attributes = ('id', 'name', 'percentDone', 'status', 'totalSize', 'uploadRatio')
-        self.items_list = [ 
-            { key : getattr(tr, key) for key in attributes } for tr in torrents
-        ] 
-
+        self.items_list = [{ key : getattr(tr, key) for key in attributes } for tr in torrents]
+        for i, tr in enumerate(torrents):
+            item = self.items_list[i]
+            item['is_dir'] = len(tr.files()) > 1
+            ext_counter = ExtCounter()
+            for file in tr.files():
+                ext_counter.push(get_file_ext(file.name))
+            item['ext'] = ext_counter.max_ext
+ 
     def get_item_str(self, i : int):
         item = self.items[i]
-        return '<b>' + str(i) + '.</b>  ' + item['name'] +\
+        return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + item['name'] +\
             ' [' + sizeof_fmt(item['totalSize']) + '] [' +\
             str(round(item['percentDone'] * 100, 2)) + '%] [' +\
-            item['status'] + '] R[' + str(round(item['uploadRatio'], 2)) +']'
+            item['status'] + '] R[' + str(round(item['uploadRatio'], 2)) + ']'
 
-class LsList(ItemsList):
+class LsList(FileDirList):
 
     def __init__(self) -> None:
         super().__init__()
+        self.reload()
+    
+    def reload(self):
+        self.items_list = []
         with os.scandir(settings['download_dir']) as it:
             for entry in it:
                 self.items_list.append(
                     {
+                        **get_dir_stats(entry), # size & ext
                         'name' : entry.name, 
                         'is_dir': entry.is_dir(), 
-                        'size': get_entry_size(entry), 
                         'ctime' : datetime.fromtimestamp(entry.stat().st_ctime)  
                     })
         self.items_list.sort(key = lambda x: [ ~x['is_dir'], x['name']])
@@ -293,14 +391,15 @@ class LsList(ItemsList):
  
     def get_item_str(self, i : int):
         item = self.items[i]
-        name = ('📁' if item['is_dir'] else '📄') + item['name']
-        return '<b>' + str(i) + '.</b> ' + name +\
+        return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + item['name'] +\
             ' [' + sizeof_fmt(item['size']) + ']'
     
-    def get_header_str(self) -> str:
-        return '<b>' + 'Storage:' +  sizeof_fmt(self.disk_stats.total) + ' used: ' + sizeof_fmt(self.disk_stats.used) + ' free: ' + sizeof_fmt(self.disk_stats.free) +  '</b>\n' +\
-            super().get_header_str()
+    def get_footer_str(self) -> str:
+        return '<b>' + 'used: ' + sizeof_fmt(self.disk_stats.used) + ' free: ' + sizeof_fmt(self.disk_stats.free) +\
+            '\ntotal: ' +  sizeof_fmt(self.disk_stats.total) + '</b>'
 
+
+######################################################################
 class SecurityMiddleware(BaseMiddleware):
     async def on_process_message(self, message: types.Message, data: dict):
         if (message.from_user.id not in settings['users_list']):
@@ -336,13 +435,11 @@ async def cmd_ls(message: types.Message, state: FSMContext):
         data['this'] = LsList()
         await data['this'].answer_message(message)
 
-
 @dp.message_handler(commands=['find'], state='*')
 async def cmd_find(message: types.Message, state: FSMContext):
     await cancel_handler(message, state)
     await FindState.begin.set()
     await message.reply('text to search:')
-
 
 @dp.message_handler(commands=['setup'], state='*')
 async def cmd_setup(message: types.Message, state: FSMContext):
@@ -359,7 +456,7 @@ async def cmd_setup(message: types.Message, state: FSMContext):
 @dp.callback_query_handler(state = ListState.select_item)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
-        await data['this'].handle_callback(query, state)
+        await data['this'].handle_callback(query)
         if data['this'].selected_index != -1:
             keyboard_markup = types.InlineKeyboardMarkup()
             selected = data['this'].selected_item
@@ -400,7 +497,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
 @dp.callback_query_handler(state=LsState.select_item)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
-        await data['this'].handle_callback(query, state)
+        await data['this'].handle_callback(query)
         if data['this'].selected_index != -1:
             keyboard_markup = types.InlineKeyboardMarkup()
             keyboard_markup.add(types.InlineKeyboardButton('Remove', callback_data = 'remove'))
@@ -449,7 +546,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
     #await query.answer()     # always answer callback queries, even if you have nothing to say
 
     async with state.proxy() as data:
-        await data['this'].handle_callback(query, state)
+        await data['this'].handle_callback(query)
         if data['this'].selected_index != -1:
             keyboard_markup = types.InlineKeyboardMarkup()
             row_btns = [types.InlineKeyboardButton('Скачать', callback_data='download')]
@@ -466,14 +563,15 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
     await query.answer()
     async with state.proxy() as data:
         selected = data['this'].selected_item
+
         if answer_data == 'download':
             if not selected['Link'] is None:
                 response = requests.get(selected['Link'])
                 transmission.add_torrent(BytesIO(response.content))
             else:
                 transmission.add_torrent(selected['MagnetUri'])
-
             await bot.send_message(query.from_user.id, 'Added to downloads', parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+
         elif answer_data == 'get_file':
             response = requests.get(selected['Link'])
             file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent' )
