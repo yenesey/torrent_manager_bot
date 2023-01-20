@@ -19,7 +19,6 @@ from transmission_rpc import Client as TransmissionClient
 from shutil import rmtree
 import os
 import psutil
-import inspect
 
 file_types = {
     'video' : {
@@ -53,21 +52,27 @@ settings = {
         "host" : "name_or_ip",
         "port" : 9091
     },
+    "torrserver" : {
+        "host" : "name_or_ip",
+        "port" : 8090
+    },
     "telegram_api_token" : "***",
     "users_list" : [],
     "download_dir" : ""
 }
 
-with open('settings.json') as fp: settings = json.load(fp)
-
+settings = json.load( open('settings.json') )
 transmission = TransmissionClient(**settings['transmission'])
 setup = {}
 
 def timestamp():
     return str( int(datetime.utcnow().timestamp()) )
 
+def get_url(service_name):
+    return settings[service_name]['host'] + ':' + str(settings[service_name]['port'])
+
 def get_base_jackett_url():
-    return 'http://' + settings['jackett']['host'] + ':' + str(settings['jackett']['port']) + '/api/v2.0/'
+    return 'http://' + get_url('jackett') + '/api/v2.0/'
 
 def get_configured_jackett_indexers():
     response = requests.get(get_base_jackett_url() + 'indexers?_=' + timestamp())
@@ -80,10 +85,9 @@ def sizeof_fmt(num, suffix="B"):
         num /= 1024.0
     return f"{num:.1f}Yi{suffix}"
 
-def get_file_ext(file_name):
+def get_file_ext(file_name : str) -> str:
     i = file_name.rfind('.')
-    if i != -1: return (file_name[i+1:].lower())
-    return None
+    return file_name[i+1:] if i != -1 else ''
 
 class ExtCounter():
     def __init__(self):
@@ -130,24 +134,16 @@ def setup_tracker_buttons(setup_map):
 logging.basicConfig(level = logging.INFO)
 
 # Initialize bot and dispatcher
-bot = Bot(token = settings['telegram_api_token'])
-dp = Dispatcher(bot, storage = MemoryStorage())
+dp = Dispatcher(Bot(token = settings['telegram_api_token']), storage = MemoryStorage())
 
 async def setup_bot_commands(dp):
     await dp.bot.set_my_commands([
         types.BotCommand('find',  'Find torrents'),
-        types.BotCommand('list',  'List torrents'),
+        types.BotCommand('list',  'List torrents (Transmission)'),
         types.BotCommand('ls',    'List storage'),
+        types.BotCommand('lsts',  'List Torrserver'),
         types.BotCommand('setup', 'Settings setup')
     ])
-
-class Setup(StatesGroup):
-    begin = State()
-    setup_trackers = State()
-
-class ListState(StatesGroup):
-    select_item = State()
-    select_action = State()
 
 class FindState(StatesGroup):
     begin = State()
@@ -158,6 +154,17 @@ class LsState(StatesGroup):
     select_item = State()
     select_action = State()
 
+class ListState(StatesGroup):
+    select_item = State()
+    select_action = State()
+
+class LstsState(StatesGroup):
+    select_item = State()
+    select_action = State()
+
+class Setup(StatesGroup):
+    begin = State()
+    setup_trackers = State()
 
 class AbstractItemsList():
 
@@ -344,7 +351,7 @@ class FindList(AbstractItemsList):
            # '[' + ('' if item['Link'] is None else 'L') + \
            # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
-class ListList(FileDirList):
+class TransmissionList(FileDirList):
 
     def __init__(self, filter_key : str = None ) -> None:
         super().__init__(filter_key)
@@ -369,7 +376,7 @@ class ListList(FileDirList):
             str(round(item['percentDone'] * 100, 2)) + '%] [' +\
             item['status'] + '] R[' + str(round(item['uploadRatio'], 2)) + ']'
 
-class LsList(FileDirList):
+class StorageList(FileDirList):
 
     def __init__(self) -> None:
         super().__init__()
@@ -399,47 +406,83 @@ class LsList(FileDirList):
             '\ntotal: ' +  sizeof_fmt(self.disk_stats.total) + '</b>'
 
 
+class TorrserverList(AbstractItemsList):
+    '''
+    {
+    "action": "add/get/set/rem/list/drop",
+    "link": "hash/magnet/link to torrent",
+    "hash": "hash of torrent",
+    "title": "title of torrent",
+    "poster": "link to poster of torrent",
+    "data": "custom data of torrent, may be json",
+    "save_to_db": true/false
+    }
+    '''
+    url = 'http://' + get_url('torrserver') + '/torrents'
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reload()
+    
+    def reload(self):
+        self.items_list = []
+        res = requests.post(self.url, json={'action' : 'list'})
+        self.items_list = [{ 'name' : item['title'], 'size' : item['torrent_size'], 'hash' : item['hash'] } for item in  res.json()]
+
+    def get_item_str(self, i : int):
+        item = self.items[i]
+        return '<b>' + str(i) + '</b>. ' + item['name'] + ' [' + sizeof_fmt(item['size']) + ']'
+
+    def add_item(self, item):
+        json={ 'action' : 'add',  'link' : item['MagnetUri'], 'title' : item['Title'], 'poster': item['Poster'] }
+        res = requests.post(self.url, json = json)
+        return res.status_code == 200
+
+    def remove_item(self, item):
+        json={ 'action' : 'rem',  'hash' : item['hash'] }
+        res = requests.post(self.url, json = json)
+        return res.status_code == 200
+
+
+
 ######################################################################
 class SecurityMiddleware(BaseMiddleware):
     async def on_process_message(self, message: types.Message, data: dict):
         if (message.from_user.id not in settings['users_list']):
+            logging.info('unknown user %r', str(message.from_user.id))
             raise CancelHandler()
 
 
 ######################################################################
-@dp.message_handler(commands=['cancel'], state='*')
-# @dp.message_handler(Text(equals='cancel', ignore_case=True), state='*')
-async def cancel_handler(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is None:
-        return
-
-    logging.info('Cancelling state %r', current_state)
-    await state.finish()
-    #await message.reply('Cancelled:' + current_state, reply_markup=types.ReplyKeyboardRemove())
-
-
-@dp.message_handler(commands=['list'], state='*')
-async def cmd_list(message: types.Message, state: FSMContext):
+@dp.message_handler(commands=['find'], state='*')
+async def cmd_find(message: types.Message, state: FSMContext):
     await cancel_handler(message, state)
-    await ListState.select_item.set()
-    async with state.proxy() as data: 
-        data['this'] = ListList(filter_key = 'status')
-        await data['this'].answer_message(message)
+    await FindState.begin.set()
+    await message.reply('text to search:')
 
 @dp.message_handler(commands=['ls'], state='*')
 async def cmd_ls(message: types.Message, state: FSMContext):
     await cancel_handler(message, state)
     await LsState.select_item.set()
     async with state.proxy() as data:
-        data['this'] = LsList()
+        data['this'] = StorageList()
         await data['this'].answer_message(message)
 
-@dp.message_handler(commands=['find'], state='*')
-async def cmd_find(message: types.Message, state: FSMContext):
+@dp.message_handler(commands=['list'], state='*')
+async def cmd_list(message: types.Message, state: FSMContext):
     await cancel_handler(message, state)
-    await FindState.begin.set()
-    await message.reply('text to search:')
+    await ListState.select_item.set()
+    async with state.proxy() as data: 
+        data['this'] = TransmissionList(filter_key = 'status')
+        await data['this'].answer_message(message)
+
+@dp.message_handler(commands=['lsts'], state='*')
+async def cmd_ls(message: types.Message, state: FSMContext):
+    await cancel_handler(message, state)
+    await LstsState.select_item.set()
+    async with state.proxy() as data:
+        data['this'] = TorrserverList()
+        await data['this'].answer_message(message)
 
 @dp.message_handler(commands=['setup'], state='*')
 async def cmd_setup(message: types.Message, state: FSMContext):
@@ -451,7 +494,18 @@ async def cmd_setup(message: types.Message, state: FSMContext):
     keyboard_markup.row(*row_btns)
     await message.reply('Settings:', reply_markup = keyboard_markup)
 
-##################### LIST  #################################################
+@dp.message_handler(commands=['cancel'], state='*')
+# @dp.message_handler(Text(equals='cancel', ignore_case=True), state='*')
+async def cancel_handler(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+
+    logging.info('Cancelling state %r', current_state)
+    await state.finish()
+    #await message.reply('Cancelled:' + current_state, reply_markup=types.ReplyKeyboardRemove())
+
+##################### list  #################################################
 
 @dp.callback_query_handler(state = ListState.select_item)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
@@ -461,7 +515,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             keyboard_markup = types.InlineKeyboardMarkup()
             selected = data['this'].selected_item
 
-            text_and_data = [('Delete', 'remove')]
+            text_and_data = [('Remove', 'remove')]
             if selected['status'] == 'stopped': text_and_data.append( ('Start', 'start')  )
             if selected['status'] in ['downloading', 'seeding']: text_and_data.append( ('Pause', 'pause')  )
 
@@ -481,18 +535,47 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         message = ''
         if answer_data == 'remove':
             transmission.remove_torrent(torrent_id, delete_data = True)
-            message = 'Removed'
+            message = 'removed'
         elif answer_data == 'pause':
             transmission.stop_torrent(torrent_id)    
-            message = 'Stopped'
+            message = 'paused'
         elif answer_data == 'start':
             transmission.start_torrent(torrent_id)
-            message = 'Started'    
+            message = 'started'    
 
         await bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
         await state.finish()
 
-##################### LS  #################################################
+##################### lsts  #################################################
+
+@dp.callback_query_handler(state = LstsState.select_item)
+async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        await data['this'].handle_callback(query)
+        if data['this'].selected_index != -1:
+            keyboard_markup = types.InlineKeyboardMarkup()
+            keyboard_markup.row(*[types.InlineKeyboardButton('Remove', callback_data='remove')])
+
+            await LstsState.next()
+            await bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
+
+@dp.callback_query_handler(state=LstsState.select_action)
+async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
+    await query.answer()  # don't forget to answer callback query as soon as possible
+
+    answer_data = query.data
+    async with state.proxy() as data:
+        selected = data['this'].selected_item
+        if answer_data == 'remove':
+            res = TorrserverList.remove_item(TorrserverList, selected)
+            await bot.send_message(query.from_user.id, 
+                ('removed' if res  else 'failed remove'), 
+                reply_markup = types.ReplyKeyboardRemove()
+            )
+            await state.finish()
+
+
+##################### ls  #################################################
 
 @dp.callback_query_handler(state=LsState.select_item)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
@@ -518,7 +601,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
                 rmtree(path_name, ignore_errors = True)
             else:
                 os.remove(path_name)
-            message = 'Removed'
+            message = 'removed'
 
         await bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
         await state.finish()
@@ -530,10 +613,10 @@ async def process_find(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         user = message.from_user.id
        
-        torrents = FindList(None, message.text, setup[user]['trackers'] if user in setup else set({}))
+        torrents = FindList(message.text, setup[user]['trackers'] if user in setup else set({}))
 
         if len(torrents.items) == 0:
-            await message.reply('Ничего не нашлось...', parse_mode=ParseMode.HTML)
+            await message.reply('Nothing found...', parse_mode=ParseMode.HTML)
             return
 
         data['this'] = torrents
@@ -549,7 +632,10 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         await data['this'].handle_callback(query)
         if data['this'].selected_index != -1:
             keyboard_markup = types.InlineKeyboardMarkup()
-            row_btns = [types.InlineKeyboardButton('Скачать', callback_data='download')]
+            row_btns = [
+                types.InlineKeyboardButton('Download (Transmission)', callback_data='download'),
+                types.InlineKeyboardButton('->Torrserver', callback_data='torrserver'),
+            ]
             if data['this'].selected_item['Link']:
                 row_btns.append(types.InlineKeyboardButton('.torrent файл', callback_data='get_file'))
             keyboard_markup.row(*row_btns)
@@ -560,7 +646,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
 @dp.callback_query_handler(state = FindState.select_action)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
     answer_data = query.data
-    await query.answer()
+    await query.answer(answer_data)
     async with state.proxy() as data:
         selected = data['this'].selected_item
 
@@ -570,13 +656,20 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
                 transmission.add_torrent(BytesIO(response.content))
             else:
                 transmission.add_torrent(selected['MagnetUri'])
-            await bot.send_message(query.from_user.id, 'Added to downloads', parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+            await bot.send_message(query.from_user.id, 'Added to downloads', reply_markup = types.ReplyKeyboardRemove() )
 
         elif answer_data == 'get_file':
             response = requests.get(selected['Link'])
             file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent' )
             await bot.send_document(query.from_user.id, document = file, reply_markup = types.ReplyKeyboardRemove())
         
+        elif answer_data == 'torrserver':
+            res = TorrserverList.add_item(TorrserverList, selected)
+            await bot.send_message(query.from_user.id, 
+                ('Added to Torrserver list' if res  else 'Failed to add'), 
+                reply_markup = types.ReplyKeyboardRemove()
+            )
+
         await state.finish()
 
 
