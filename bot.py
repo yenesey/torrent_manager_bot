@@ -134,7 +134,7 @@ def setup_tracker_buttons(setup_map):
 logging.basicConfig(level = logging.INFO)
 
 # Initialize bot and dispatcher
-dp = Dispatcher(Bot(token = settings['telegram_api_token']), storage = MemoryStorage())
+dp = Dispatcher( Bot(token = settings['telegram_api_token']) , storage = MemoryStorage())
 
 async def setup_bot_commands(dp):
     await dp.bot.set_my_commands([
@@ -523,7 +523,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             keyboard_markup.row(*row_btns)
 
             await ListState.next()
-            await bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
+            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
 
 @dp.callback_query_handler(state=ListState.select_action)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
@@ -543,7 +543,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             transmission.start_torrent(torrent_id)
             message = 'started'    
 
-        await bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+        await query.bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
         await state.finish()
 
 ##################### lsts  #################################################
@@ -557,7 +557,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             keyboard_markup.row(*[types.InlineKeyboardButton('Remove', callback_data='remove')])
 
             await LstsState.next()
-            await bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
+            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
 
 @dp.callback_query_handler(state=LstsState.select_action)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
@@ -568,7 +568,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         selected = data['this'].selected_item
         if answer_data == 'remove':
             res = TorrserverList.remove_item(TorrserverList, selected)
-            await bot.send_message(query.from_user.id, 
+            await query.bot.send_message(query.from_user.id, 
                 ('removed' if res  else 'failed remove'), 
                 reply_markup = types.ReplyKeyboardRemove()
             )
@@ -585,7 +585,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             keyboard_markup = types.InlineKeyboardMarkup()
             keyboard_markup.add(types.InlineKeyboardButton('Remove', callback_data = 'remove'))
             await LsState.next()
-            await bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
+            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
 
 @dp.callback_query_handler(state = LsState.select_action)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
@@ -603,7 +603,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
                 os.remove(path_name)
             message = 'removed'
 
-        await bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+        await query.bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
         await state.finish()
 
 ##################### FIND #################################################
@@ -641,7 +641,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             keyboard_markup.row(*row_btns)
 
             await FindState.next()
-            await bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup)
+            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup)
 
 @dp.callback_query_handler(state = FindState.select_action)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
@@ -649,14 +649,13 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
     await query.answer(answer_data)
     async with state.proxy() as data:
         selected = data['this'].selected_item
-
         if answer_data == 'download':
             if not selected['Link'] is None:
                 response = requests.get(selected['Link'])
                 transmission.add_torrent(BytesIO(response.content))
             else:
                 transmission.add_torrent(selected['MagnetUri'])
-            await bot.send_message(query.from_user.id, 'Added to downloads', reply_markup = types.ReplyKeyboardRemove() )
+            await query.bot.send_message(query.from_user.id, 'Added to downloads', reply_markup = types.ReplyKeyboardRemove() )
 
         elif answer_data == 'get_file':
             response = requests.get(selected['Link'])
@@ -665,7 +664,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         
         elif answer_data == 'torrserver':
             res = TorrserverList.add_item(TorrserverList, selected)
-            await bot.send_message(query.from_user.id, 
+            await query.bot.send_message(query.from_user.id, 
                 ('Added to Torrserver list' if res  else 'Failed to add'), 
                 reply_markup = types.ReplyKeyboardRemove()
             )
@@ -689,11 +688,11 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         setup[user]['trackers'] = set(setup[user]['trackers'] ^ set({answer_data}))
         keyboard_markup = setup_tracker_buttons(setup[user]['trackers'])
         await Setup.setup_trackers.set()
-        await bot.send_message(user, 'Select tracker', parse_mode=ParseMode.HTML, reply_markup = keyboard_markup )
+        await query.bot.send_message(user, 'Select tracker', parse_mode=ParseMode.HTML, reply_markup = keyboard_markup )
         #await bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
         return
  
-    await bot.send_message(user, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+    await query.bot.send_message(user, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
     await state.finish()
 
 
@@ -704,7 +703,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
     answer_data = query.data
 
     if answer_data == 'ok':
-        await bot.send_message(query.from_user.id, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+        await query.bot.send_message(query.from_user.id, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
         await state.finish()
         return
 
@@ -716,7 +715,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
     setup[user]['trackers'] = set(setup[user]['trackers'] ^ set({answer_data}))
 
     keyboard_markup = setup_tracker_buttons(setup[user]['trackers'])
-    await bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
+    await query.bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
 
 
 
