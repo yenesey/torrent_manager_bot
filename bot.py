@@ -262,10 +262,11 @@ class AbstractItemsList():
         # sort buttons
         if len(self.sort_keys) > 0:
             row_btns = []
-            for key in self.sort_keys:
-                i = find(self.sort_order, lambda e: e[0] == key) 
-                btn_text = key
-                if i != -1: btn_text += ['↓', '↑'][ self.sort_order[i][1] ]
+            for item in self.sort_keys:
+                key, alias = item if type(item) == tuple else (item, item)
+                btn_text = alias
+                if (key, 0) in self.sort_order: btn_text += '↓'
+                if (key, 1) in self.sort_order: btn_text += '↑'
                 row_btns.append( types.InlineKeyboardButton(text = btn_text, callback_data = '#order_by#' + key ) )
             keyboard_markup.row(*row_btns) 
 
@@ -403,7 +404,7 @@ class TransmissionList(FileDirList):
 
     def __init__(self, filter_key : str = None ) -> None:
         super().__init__(filter_key)
-        self.sort_keys = ['is_dir', 'name', 'totalSize', 'addedDate']
+        self.sort_keys = ['is_dir', 'name', ('totalSize' , 'size'), ('addedDate', 'added')]
         self.sort_order = [('addedDate', 0)]
         self.reload()
 
