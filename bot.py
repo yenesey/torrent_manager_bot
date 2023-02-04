@@ -10,6 +10,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.dispatcher.handler import CancelHandler
 #from aiogram.utils import markdown
+from aiogram.utils.exceptions import MessageNotModified
 
 import requests
 from io import BytesIO
@@ -101,6 +102,11 @@ class ExtCounter():
             self.max_ext_count = self.all_ext[ext]
             self.max_ext = ext    
 
+def find(self, callback):
+    for index, item in enumerate(self):
+        if callback(item):
+            return index
+    return -1
 
 def get_dir_stats(entry):
     ext_counter = ExtCounter()
@@ -131,7 +137,12 @@ def setup_tracker_buttons(setup_map):
     return keyboard_markup
 
 # configure logging
-logging.basicConfig(level = logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s %(levelname)-8s %(message)s',
+    level = logging.INFO,
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
 
 # Initialize bot and dispatcher
 dp = Dispatcher( Bot(token = settings['telegram_api_token']) , storage = MemoryStorage())
@@ -139,7 +150,7 @@ dp = Dispatcher( Bot(token = settings['telegram_api_token']) , storage = MemoryS
 async def setup_bot_commands(dp):
     await dp.bot.set_my_commands([
         types.BotCommand('find',  'Find torrents'),
-        types.BotCommand('list',  'List torrents (Transmission)'),
+        types.BotCommand('list',  'List torrents'),
         types.BotCommand('ls',    'List storage'),
         types.BotCommand('lsts',  'List Torrserver'),
         types.BotCommand('setup', 'Settings setup')
@@ -170,13 +181,15 @@ class AbstractItemsList():
 
     def __init__(self) -> None:
         self.items_list = []
+        self.sort_keys = []
+        self.sort_order = []  # [ ('key1' : 1), ('key2' : 2 ) ]
+
         self.page_num = 0
         self.items_on_page = 5
         self.selected_index = -1
         self.selected_item = None
         self.from_index = -1
         self.to_index = -1
-        self._reply_hash = -1
 
     def reload(self):
         raise NotImplementedError()
@@ -189,6 +202,12 @@ class AbstractItemsList():
     def items(self):  
         return self.items_list
 
+    def sort_items(self):
+        sort_order = self.sort_order.copy()
+        sort_order.reverse()
+        for key, order in sort_order:
+            self.items_list.sort( key = lambda item: item[key], reverse = (order == 0) )
+
     def get_item_str(self) -> str:
         raise NotImplementedError()
 
@@ -196,7 +215,6 @@ class AbstractItemsList():
         return '<b>results: ' + str(self.from_index) + '-' + str(self.to_index - 1) + ' of ' + str(len(self.items)-1) + '</b>'
 
     def get_footer_str(self) -> str:
-        #raise NotImplementedError()
         return ''
 
     def get_selected_str(self) -> str:
@@ -237,11 +255,23 @@ class AbstractItemsList():
             row_btns.append( types.InlineKeyboardButton(text = str(i), callback_data = str(i)) )
         footer_str = self.get_footer_str()
         if footer_str: text = text + hr + footer_str
-        keyboard_markup.row(*row_btns) # numbered buttons
 
+        # number buttons
+        keyboard_markup.row(*row_btns) 
+        
+        # sort buttons
+        if len(self.sort_keys) > 0:
+            row_btns = []
+            for key in self.sort_keys:
+                i = find(self.sort_order, lambda e: e[0] == key) 
+                btn_text = key
+                if i != -1: btn_text += ['↓', '↑'][ self.sort_order[i][1] ]
+                row_btns.append( types.InlineKeyboardButton(text = btn_text, callback_data = '#order_by#' + key ) )
+            keyboard_markup.row(*row_btns) 
+
+        # page control buttons        
         btn_data = {'prev_page': '⬅', 'next_page': '➡', 'reload': '🔁', 'dummy': '-'}
         btn = { key: types.InlineKeyboardButton(text = btn_data[key], callback_data = key) for key in btn_data }
-
         keyboard_markup.row( # control buttons
             btn['prev_page'] if self.page_num > 0 else btn['dummy'],
             # reload active only when implemented in subclass
@@ -252,23 +282,39 @@ class AbstractItemsList():
 
     async def answer_message(self, message: types.Message):
         text, keyboard_markup = self.text_and_buttons()
-        self._reply_hash = hash(text)
-        await message.answer(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
+        try:
+            await message.answer(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
+        except MessageNotModified as e:
+            logging.info('Message is not modified')
 
     async def edit_text(self, query: types.CallbackQuery):
         text, keyboard_markup = self.text_and_buttons()
-        _hash = hash(text)
-        if self._reply_hash != _hash:
-            self._reply_hash = _hash
+        try:
             await query.message.edit_text(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
+        except MessageNotModified as e:
+            logging.info('Message is not modified')
 
     async def handle_callback(self, query: types.CallbackQuery):
         await query.answer(query.data)
         if query.data in ['next_page', 'prev_page', 'reload']: 
             getattr(self, query.data)() # call proper method
+
+        elif query.data[:10] == '#order_by#':
+            key = query.data[10:]
+            index = find(self.sort_order, lambda e: e[0] == key)
+            if index == -1: # not present yet
+                self.sort_order.append((key, 0))
+            else:
+                order = self.sort_order[index][1]
+                del self.sort_order[index]
+                if order == 0:
+                    self.sort_order.insert(index, (key, 1))
+            self.sort_items()
+
         elif query.data.isdigit():
             self.selected_index = int(query.data)
             self.selected_item = self.items[self.selected_index]
+
         await self.edit_text(query)
 
 
@@ -280,7 +326,7 @@ class FileDirList(AbstractItemsList):
         self.filter = set()
 
     @property
-    def items(self):  
+    def items(self):
         return [item for item in self.items_list if (len(self.filter) == 0) or (len(self.filter) > 0 and item[self.filter_key] in self.filter)]
 
     def get_icon(self, item) -> str: 
@@ -327,6 +373,9 @@ class FindList(AbstractItemsList):
     
     def __init__(self, query_string = str, trackers = set) -> None:
         super().__init__()
+        self.sort_keys = ['Size', 'Seeders', 'Peers']
+        self.sort_order = [('Size', 0), ('Seeders', 0)]
+
         params = {
             'apikey': settings['jackett']['api_key'], 
             'Query' : query_string, 
@@ -340,26 +389,27 @@ class FindList(AbstractItemsList):
             return []
 
         results = response.json()['Results']
-        results_filtered = [el for el in results if el['Seeders'] > 0 or el['Peers'] > 0]
-        results_filtered.sort(key=lambda x: [x['Size'], x['Seeders'], x['Peers']], reverse=True)
-        self.items_list = results_filtered
+        self.items_list = [el for el in results if el['Seeders'] > 0 or el['Peers'] > 0]
+        self.sort_items()
 
     def get_item_str(self, i : int):
         item = self.items[i]
         return '<b>' + str(i) + '.</b> ' + item['Title'] + \
-            ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' #+ \
-           # '[' + ('' if item['Link'] is None else 'L') + \
+            ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' + \
+            ' S/P[' +str(item['Seeders']) + '/' + str(item['Peers']) + ']'
            # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
 class TransmissionList(FileDirList):
 
     def __init__(self, filter_key : str = None ) -> None:
         super().__init__(filter_key)
+        self.sort_keys = ['is_dir', 'name', 'totalSize', 'addedDate']
+        self.sort_order = [('addedDate', 0)]
         self.reload()
 
     def reload(self):
         torrents = transmission.get_torrents()
-        attributes = ('id', 'name', 'percentDone', 'status', 'totalSize', 'uploadRatio')
+        attributes = ('id', 'name', 'percentDone', 'status', 'totalSize', 'uploadRatio', 'addedDate')
         self.items_list = [{ key : getattr(tr, key) for key in attributes } for tr in torrents]
         for i, tr in enumerate(torrents):
             item = self.items_list[i]
@@ -368,6 +418,7 @@ class TransmissionList(FileDirList):
             for file in tr.files():
                 ext_counter.push(get_file_ext(file.name))
             item['ext'] = ext_counter.max_ext
+        self.sort_items()
  
     def get_item_str(self, i : int):
         item = self.items[i]
@@ -380,20 +431,21 @@ class StorageList(FileDirList):
 
     def __init__(self) -> None:
         super().__init__()
+        self.sort_keys = ['is_dir', 'name', 'size', 'ctime']
+        self.sort_order = [('ctime', 0)]
         self.reload()
     
     def reload(self):
-        self.items_list = []
         with os.scandir(settings['download_dir']) as it:
-            for entry in it:
-                self.items_list.append(
-                    {
-                        **get_dir_stats(entry), # size & ext
-                        'name' : entry.name, 
-                        'is_dir': entry.is_dir(), 
-                        'ctime' : datetime.fromtimestamp(entry.stat().st_ctime)  
-                    })
-        self.items_list.sort(key = lambda x: [ ~x['is_dir'], x['name']])
+            self.items_list = [
+                {
+                    **get_dir_stats(entry), # size & ext
+                    'name' : entry.name, 
+                    'is_dir': entry.is_dir(), 
+                    'ctime' : datetime.fromtimestamp(entry.stat().st_ctime)  
+                } for entry in it 
+            ]
+        self.sort_items()
         self.disk_stats = psutil.disk_usage(settings['download_dir'])
  
     def get_item_str(self, i : int):
@@ -633,7 +685,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         if data['this'].selected_index != -1:
             keyboard_markup = types.InlineKeyboardMarkup()
             row_btns = [
-                types.InlineKeyboardButton('Download (Transmission)', callback_data='download'),
+                types.InlineKeyboardButton('->Transmission', callback_data='download'),
                 types.InlineKeyboardButton('->Torrserver', callback_data='torrserver'),
             ]
             if data['this'].selected_item['Link']:
