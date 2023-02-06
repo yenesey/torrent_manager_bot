@@ -21,27 +21,6 @@ from shutil import rmtree
 import os
 import psutil
 
-file_types = {
-    'video' : {
-        'extension' : ['avi', 'mkv', 'mp4', 'm4v', 'mov', 'bdmv', 'vob'],
-        'icon' : '🎬'
-    },
-    'music' :{
-        'extension' : ['mp3', 'wav', 'm3u', 'ogg'],
-        'icon' : '🎧'
-    },
-    'other' : {
-        'extension' : [],
-        'icon' : '📄'
-    }
-}
-
-def get_ext_icon(ext):
-    for tp in file_types:
-        if ext.lower() in file_types[tp]['extension']:
-            return file_types[tp]['icon']
-    return file_types['other']['icon']
-
 # you must create 'settings.json' file based on this example:  
 settings = {
     "jackett" : {
@@ -107,24 +86,6 @@ def find(self, callback):
         if callback(item):
             return index
     return -1
-
-def get_dir_stats(entry):
-    ext_counter = ExtCounter()
-    sum_size = 0
-    
-    def recurse(entry):
-        nonlocal sum_size, ext_counter
-        if entry.is_dir():
-            with os.scandir(entry.path) as dir_iter:
-                for el in dir_iter:
-                    recurse(el)
-        else:
-            sum_size += entry.stat().st_size
-            ext = get_file_ext(entry.name)
-            ext_counter.push(ext)
-        
-    recurse(entry)
-    return { 'ext' : ext_counter.max_ext, 'size' : sum_size }
 
 
 def setup_tracker_buttons(setup_map):
@@ -347,13 +308,36 @@ class AbstractItemsList():
 
 class FileDirList(AbstractItemsList):
 
+    file_types = {
+        'video' : {
+            'extension' : ['avi', 'mkv', 'mp4', 'm4v', 'mov', 'bdmv', 'vob'],
+            'icon' : '🎬'
+        },
+        'music' :{
+            'extension' : ['mp3', 'wav', 'm3u', 'ogg'],
+            'icon' : '🎧'
+        },
+        'other' : {
+            'extension' : [],
+            'icon' : '📄'
+        }
+    }
+    
+    @staticmethod
+    def get_ext_icon(ext):
+        file_types = FileDirList.file_types
+        for tp in file_types:
+            if ext.lower() in file_types[tp]['extension']:
+                return file_types[tp]['icon']
+        return file_types['other']['icon']
+
     def get_icon(self, item) -> str: 
         # list item must have: { 'is_dir' : bool, 'ext' : str }
         if item['is_dir']:
             if 'ext' in item:
-                return '📁' + get_ext_icon(item['ext'])
+                return '📁' + self.get_ext_icon(item['ext'])
             return '📁'
-        return get_ext_icon( get_file_ext(item['name']) )
+        return self.get_ext_icon( get_file_ext(item['name']) )
 
 
 class FindList(AbstractItemsList):
@@ -423,11 +407,30 @@ class StorageList(FileDirList):
         self.sort_order = [('ctime', 0)]
         self.reload()
     
+    @staticmethod
+    def get_dir_stats(entry):
+        ext_counter = ExtCounter()
+        sum_size = 0
+
+        def recurse(entry):
+            nonlocal sum_size, ext_counter
+            if entry.is_dir():
+                with os.scandir(entry.path) as dir_iter:
+                    for el in dir_iter:
+                        recurse(el)
+            else:
+                sum_size += entry.stat().st_size
+                ext = get_file_ext(entry.name)
+                ext_counter.push(ext)
+
+        recurse(entry)
+        return { 'ext' : ext_counter.max_ext, 'size' : sum_size }
+
     def reload(self):
         with os.scandir(settings['download_dir']) as it:
             self.items_list = [
                 {
-                    **get_dir_stats(entry), # size & ext
+                    **self.get_dir_stats(entry), # size & ext
                     'name' : entry.name, 
                     'is_dir': entry.is_dir(), 
                     'ctime' : datetime.fromtimestamp(entry.stat().st_ctime)  
