@@ -65,28 +65,11 @@ def sizeof_fmt(num, suffix="B"):
         num /= 1024.0
     return f"{num:.1f}Yi{suffix}"
 
-def get_file_ext(file_name : str) -> str:
-    i = file_name.rfind('.')
-    return file_name[i+1:] if i != -1 else ''
-
-class ExtCounter():
-    def __init__(self):
-        self.all_ext = {}
-        self.max_ext_count = 0
-        self.max_ext = ''
-    
-    def push(self, ext):
-        self.all_ext[ext] = self.all_ext[ext] + 1 if ext in self.all_ext else 1
-        if self.max_ext_count < self.all_ext[ext]: 
-            self.max_ext_count = self.all_ext[ext]
-            self.max_ext = ext    
-
 def find(self, callback):
     for index, item in enumerate(self):
         if callback(item):
             return index
     return -1
-
 
 def setup_tracker_buttons(setup_map):
     indexers = get_configured_jackett_indexers()
@@ -103,7 +86,6 @@ logging.basicConfig(
     level = logging.INFO,
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-
 
 # Initialize bot and dispatcher
 dp = Dispatcher( Bot(token = settings['telegram_api_token']) , storage = MemoryStorage())
@@ -138,6 +120,7 @@ class Setup(StatesGroup):
     begin = State()
     setup_trackers = State()
 
+# -------------------------------------------------------------------
 class AbstractItemsList():
 
     def __init__(self) -> None:
@@ -322,7 +305,26 @@ class FileDirList(AbstractItemsList):
             'icon' : '📄'
         }
     }
-    
+
+    @staticmethod
+    def get_file_ext(file_name : str) -> str:
+        i = file_name.rfind('.')
+        return file_name[i+1:] if i != -1 else ''
+
+    @staticmethod
+    def max_key_counter():
+        keys = {}
+        max_count = 0
+        max_key = ''
+        def count(key = '_'):
+            nonlocal keys, max_count, max_key
+            keys[key] = keys[key] + 1 if key in keys else 1
+            if max_count < keys[key]: 
+                max_count = keys[key]
+                max_key = key    
+            return { 'max': max_key, 'count': max_count }
+        return count
+
     @staticmethod
     def get_ext_icon(ext):
         file_types = FileDirList.file_types
@@ -337,7 +339,7 @@ class FileDirList(AbstractItemsList):
             if 'ext' in item:
                 return '📁' + self.get_ext_icon(item['ext'])
             return '📁'
-        return self.get_ext_icon( get_file_ext(item['name']) )
+        return self.get_ext_icon( self.get_file_ext(item['name']) )
 
 
 class FindList(AbstractItemsList):
@@ -386,10 +388,10 @@ class TransmissionList(FileDirList):
         for i, tr in enumerate(torrents):
             item = self.items_list[i]
             item['is_dir'] = len(tr.files()) > 1
-            ext_counter = ExtCounter()
+            key_counter = self.max_key_counter()
             for file in tr.files():
-                ext_counter.push(get_file_ext(file.name))
-            item['ext'] = ext_counter.max_ext
+                ext = self.get_file_ext(file.name)
+                item['ext'] = key_counter( ext )['max']
         self.sort_items()
  
     def get_item_str(self, i : int):
@@ -409,22 +411,22 @@ class StorageList(FileDirList):
     
     @staticmethod
     def get_dir_stats(entry):
-        ext_counter = ExtCounter()
+        key_counter = FileDirList.max_key_counter()
         sum_size = 0
 
         def recurse(entry):
-            nonlocal sum_size, ext_counter
+            nonlocal sum_size, key_counter
             if entry.is_dir():
                 with os.scandir(entry.path) as dir_iter:
                     for el in dir_iter:
                         recurse(el)
             else:
                 sum_size += entry.stat().st_size
-                ext = get_file_ext(entry.name)
-                ext_counter.push(ext)
+                ext = FileDirList.get_file_ext(entry.name)
+                key_counter(ext)
 
         recurse(entry)
-        return { 'ext' : ext_counter.max_ext, 'size' : sum_size }
+        return { 'ext' : key_counter()['max'], 'size' : sum_size }
 
     def reload(self):
         with os.scandir(settings['download_dir']) as it:
