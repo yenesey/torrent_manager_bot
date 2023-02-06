@@ -181,8 +181,11 @@ class AbstractItemsList():
 
     def __init__(self) -> None:
         self.items_list = []
-        self.sort_keys = []
-        self.sort_order = []  # [ ('key1' : 1), ('key2' : 2 ) ]
+        self.sort_keys = []   # enum sortable keys in intems list - ['key1', 'key2'...]
+        self.sort_order = []  # [ ('key1' : 0), ('key2' : 1 ) ] # 0 - desc (reversed) 1 - asc (allow multiple key sorting)
+
+        self.filter_key = ''  # items is classified by given key, that allow filter items (todo: multiple keys)
+        self.filter = set()   # set() -- toggle filters by classification (classify_items)
 
         self.page_num = 0
         self.items_on_page = 5
@@ -195,18 +198,29 @@ class AbstractItemsList():
         raise NotImplementedError()
 
     #@items.setter
-    #def items(self, items_list : list):  
-    #    self.items_list = items_list 
+    #def items(self, items_list : list):
+    #    self.items_list = items_list
 
     @property
-    def items(self):  
-        return self.items_list
+    def items(self):
+        return [item for item in self.items_list 
+            if (len(self.filter) == 0) or (
+                len(self.filter) > 0 and item[self.filter_key] in self.filter
+            )
+        ]
 
-    def sort_items(self):
-        sort_order = self.sort_order.copy()
-        sort_order.reverse()
-        for key, order in sort_order:
+    def sort_items(self) -> list:
+        for key, order in reversed(self.sort_order):
             self.items_list.sort( key = lambda item: item[key], reverse = (order == 0) )
+
+    def classify_items(self) -> list:
+        # classify items by key 'filter_key'
+        cls = []
+        key = self.filter_key
+        for item in self.items_list:
+            if not item[key] in cls: 
+                cls.append(item[key])
+        return cls
 
     def get_item_str(self) -> str:
         raise NotImplementedError()
@@ -270,6 +284,14 @@ class AbstractItemsList():
                 row_btns.append( types.InlineKeyboardButton(text = btn_text, callback_data = '#order_by#' + key ) )
             keyboard_markup.row(*row_btns) 
 
+        if self.filter_key:
+            keyboard_markup.row(*[
+                types.InlineKeyboardButton(
+                    text = ('✓' if key in self.filter else '') + key, 
+                    callback_data = '#filter#' + key
+                ) for key in self.classify_items()
+            ])
+
         # page control buttons        
         btn_data = {'prev_page': '⬅', 'next_page': '➡', 'reload': '🔁', 'dummy': '-'}
         btn = { key: types.InlineKeyboardButton(text = btn_data[key], callback_data = key) for key in btn_data }
@@ -312,6 +334,10 @@ class AbstractItemsList():
                     self.sort_order.insert(index, (key, 1))
             self.sort_items()
 
+        elif query.data[:8] == '#filter#':
+            self.page_num = 0
+            self.filter = self.filter ^ set({query.data[8:]})
+
         elif query.data.isdigit():
             self.selected_index = int(query.data)
             self.selected_item = self.items[self.selected_index]
@@ -321,15 +347,6 @@ class AbstractItemsList():
 
 class FileDirList(AbstractItemsList):
 
-    def __init__(self, filter_key : str = None) -> None:
-        super().__init__()
-        self.filter_key = filter_key
-        self.filter = set()
-
-    @property
-    def items(self):
-        return [item for item in self.items_list if (len(self.filter) == 0) or (len(self.filter) > 0 and item[self.filter_key] in self.filter)]
-
     def get_icon(self, item) -> str: 
         # list item must have: { 'is_dir' : bool, 'ext' : str }
         if item['is_dir']:
@@ -338,44 +355,13 @@ class FileDirList(AbstractItemsList):
             return '📁'
         return get_ext_icon( get_file_ext(item['name']) )
 
-    def classify(self, key) -> list:
-        # classify items by key
-        cls = []
-        for item in self.items_list:
-            if not item[key] in cls:
-                cls.append(item[key])
-        return cls
-
-    def text_and_buttons(self) -> tuple[str, types.InlineKeyboardMarkup]:
-        text, keyboard_markup = super().text_and_buttons()
-
-        if self.filter_key:
-            keyboard_markup.row(*[
-                types.InlineKeyboardButton(
-                    text = ('✓' if key in self.filter else '') + key, 
-                    callback_data = 'filter:' + key
-                ) for key in self.classify(self.filter_key)
-            ])
-
-        return text, keyboard_markup
-
-    async def handle_callback(self, query: types.CallbackQuery):
-        await super().handle_callback(query)
-        if query.data[:7] == 'filter:':
-            self.page_num = 0
-            self.filter = self.filter ^ set({query.data[7:]})
-            await self.edit_text(query)
-            #await bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
-
-
-
 
 class FindList(AbstractItemsList):
     
     def __init__(self, query_string = str, trackers = set) -> None:
         super().__init__()
         self.sort_keys = ['Size', 'Seeders', 'Peers']
-        self.sort_order = [('Size', 0), ('Seeders', 0)]
+        self.sort_order = [('Size', 0), ('Seeders', 0), ('Peers', 0)]
 
         params = {
             'apikey': settings['jackett']['api_key'], 
@@ -402,10 +388,11 @@ class FindList(AbstractItemsList):
 
 class TransmissionList(FileDirList):
 
-    def __init__(self, filter_key : str = None ) -> None:
-        super().__init__(filter_key)
-        self.sort_keys = ['is_dir', 'name', ('totalSize' , 'size'), ('addedDate', 'added')]
+    def __init__(self) -> None:
+        super().__init__()
+        self.sort_keys = [('addedDate', 'added'), 'name', ('totalSize' , 'size'), 'is_dir']
         self.sort_order = [('addedDate', 0)]
+        self.filter_key = 'status'
         self.reload()
 
     def reload(self):
@@ -432,7 +419,7 @@ class StorageList(FileDirList):
 
     def __init__(self) -> None:
         super().__init__()
-        self.sort_keys = ['is_dir', 'name', 'size', 'ctime']
+        self.sort_keys = ['ctime', 'name', 'size', 'is_dir']
         self.sort_order = [('ctime', 0)]
         self.reload()
     
@@ -526,7 +513,7 @@ async def cmd_list(message: types.Message, state: FSMContext):
     await cancel_handler(message, state)
     await ListState.select_item.set()
     async with state.proxy() as data: 
-        data['this'] = TransmissionList(filter_key = 'status')
+        data['this'] = TransmissionList()
         await data['this'].answer_message(message)
 
 @dp.message_handler(commands=['lsts'], state='*')
