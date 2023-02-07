@@ -137,9 +137,10 @@ class AbstractItemsList():
         self.selected_item = None
         self.from_index = -1
         self.to_index = -1
+        self.reload()
 
     def reload(self):
-        raise NotImplementedError()
+        pass
 
     #@items.setter
     #def items(self, items_list : list):
@@ -155,7 +156,7 @@ class AbstractItemsList():
 
     def sort_items(self) -> list:
         for key, order in reversed(self.sort_order):
-            self.items_list.sort( key = lambda item: item[key], reverse = (order == 0) )
+            self.items_list.sort( key = lambda item: (item[key] is not None, item[key]), reverse = (order == 0) )
 
     def classify_items(self) -> list:
         # classify items by key 'filter_key'
@@ -322,7 +323,7 @@ class FileDirList(AbstractItemsList):
             if max_count < keys[key]: 
                 max_count = keys[key]
                 max_key = key    
-            return { 'max': max_key, 'count': max_count }
+            return max_key
         return count
 
     @staticmethod
@@ -346,7 +347,7 @@ class FindList(AbstractItemsList):
     
     def __init__(self, query_string = str, trackers = set) -> None:
         super().__init__()
-        self.sort_keys = ['Size', 'Seeders', 'Peers']
+        self.sort_keys = [('Size', 'size'), ('Seeders', 'seeds'), ('Peers', 'peers'), ('Link', 'lnk')]
         self.sort_order = [('Size', 0), ('Seeders', 0), ('Peers', 0)]
 
         params = {
@@ -379,7 +380,6 @@ class TransmissionList(FileDirList):
         self.sort_keys = [('addedDate', 'added'), 'name', ('totalSize' , 'size'), 'is_dir']
         self.sort_order = [('addedDate', 0)]
         self.filter_key = 'status'
-        self.reload()
 
     def reload(self):
         torrents = transmission.get_torrents()
@@ -388,10 +388,11 @@ class TransmissionList(FileDirList):
         for i, tr in enumerate(torrents):
             item = self.items_list[i]
             item['is_dir'] = len(tr.files()) > 1
-            key_counter = self.max_key_counter()
+            ext_counter = FileDirList.max_key_counter()
             for file in tr.files():
-                ext = self.get_file_ext(file.name)
-                item['ext'] = key_counter( ext )['max']
+                ext_counter( self.get_file_ext(file.name) )
+            item['ext'] = ext_counter()
+
         self.sort_items()
  
     def get_item_str(self, i : int):
@@ -407,15 +408,14 @@ class StorageList(FileDirList):
         super().__init__()
         self.sort_keys = ['ctime', 'name', 'size', 'is_dir']
         self.sort_order = [('ctime', 0)]
-        self.reload()
     
     @staticmethod
     def get_dir_stats(entry):
-        key_counter = FileDirList.max_key_counter()
+        ext_counter = FileDirList.max_key_counter()
         sum_size = 0
 
         def recurse(entry):
-            nonlocal sum_size, key_counter
+            nonlocal sum_size, ext_counter
             if entry.is_dir():
                 with os.scandir(entry.path) as dir_iter:
                     for el in dir_iter:
@@ -423,10 +423,10 @@ class StorageList(FileDirList):
             else:
                 sum_size += entry.stat().st_size
                 ext = FileDirList.get_file_ext(entry.name)
-                key_counter(ext)
+                ext_counter(ext)
 
         recurse(entry)
-        return { 'ext' : key_counter()['max'], 'size' : sum_size }
+        return { 'ext' : ext_counter(), 'size' : sum_size }
 
     def reload(self):
         with os.scandir(settings['download_dir']) as it:
@@ -464,10 +464,6 @@ class TorrserverList(AbstractItemsList):
     }
     '''
     url = 'http://' + get_url('torrserver') + '/torrents'
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.reload()
     
     def reload(self):
         self.items_list = []
@@ -682,7 +678,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
                 types.InlineKeyboardButton('->Torrserver', callback_data='torrserver'),
             ]
             if data['this'].selected_item['Link']:
-                row_btns.append(types.InlineKeyboardButton('.torrent файл', callback_data='get_file'))
+                row_btns.append(types.InlineKeyboardButton('->.torrent файл', callback_data='get_file'))
             keyboard_markup.row(*row_btns)
 
             await FindState.next()
@@ -705,7 +701,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         elif answer_data == 'get_file':
             response = requests.get(selected['Link'])
             file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent' )
-            await bot.send_document(query.from_user.id, document = file, reply_markup = types.ReplyKeyboardRemove())
+            await query.bot.send_document(query.from_user.id, document = file, reply_markup = types.ReplyKeyboardRemove())
         
         elif answer_data == 'torrserver':
             res = TorrserverList.add_item(TorrserverList, selected)
@@ -762,10 +758,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
     keyboard_markup = setup_tracker_buttons(setup[user]['trackers'])
     await query.bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
 
-
-
 ##############################################################
-
 
 @dp.message_handler()
 async def echo(message: types.Message):
