@@ -137,7 +137,6 @@ class AbstractItemsList():
         self.selected_item = None
         self.from_index = -1
         self.to_index = -1
-        self.reload()
 
     def reload(self):
         pass
@@ -322,7 +321,7 @@ class FileDirList(AbstractItemsList):
             keys[key] = keys[key] + 1 if key in keys else 1
             if max_count < keys[key]: 
                 max_count = keys[key]
-                max_key = key    
+                max_key = key
             return max_key
         return count
 
@@ -349,18 +348,21 @@ class FindList(AbstractItemsList):
         super().__init__()
         self.sort_keys = [('Size', 'size'), ('Seeders', 'seeds'), ('Peers', 'peers'), ('Link', 'lnk')]
         self.sort_order = [('Size', 0), ('Seeders', 0), ('Peers', 0)]
+        self.filter_key = 'TrackerId'
+        self.query_string = query_string
+        self.trackers = trackers
+        self.reload()
 
+    def reload(self):
         params = {
             'apikey': settings['jackett']['api_key'], 
-            'Query' : query_string, 
-            'Tracker[]' : list(trackers), 
+            'Query' : self.query_string, 
+            'Tracker[]' : list(self.trackers), 
             '_' : timestamp()
         }
 
         response = requests.get(get_base_jackett_url() + 'indexers/all/results', params)
-    
-        if response.status_code != 200:
-            return []
+        if response.status_code != 200: return
 
         results = response.json()['Results']
         self.items_list = [el for el in results if el['Seeders'] > 0 or el['Peers'] > 0]
@@ -380,6 +382,7 @@ class TransmissionList(FileDirList):
         self.sort_keys = [('addedDate', 'added'), 'name', ('totalSize' , 'size'), 'is_dir']
         self.sort_order = [('addedDate', 0)]
         self.filter_key = 'status'
+        self.reload()
 
     def reload(self):
         torrents = transmission.get_torrents()
@@ -392,7 +395,6 @@ class TransmissionList(FileDirList):
             for file in tr.files():
                 ext_counter( self.get_file_ext(file.name) )
             item['ext'] = ext_counter()
-
         self.sort_items()
  
     def get_item_str(self, i : int):
@@ -401,6 +403,14 @@ class TransmissionList(FileDirList):
             ' [' + sizeof_fmt(item['totalSize']) + '] [' +\
             str(round(item['percentDone'] * 100, 2)) + '%] [' +\
             item['status'] + '] R[' + str(round(item['uploadRatio'], 2)) + ']'
+    
+    def get_footer_str(self) -> str:
+        total_size = 0
+        total_uploaded = 0
+        for item in self.items:
+            total_size += item['totalSize']
+            total_uploaded += item['totalSize'] * item['uploadRatio']
+        return '<b>' + 'total: ' + sizeof_fmt(total_size) + ' uploaded: ' + sizeof_fmt(total_uploaded) + '</b>'
 
 class StorageList(FileDirList):
 
@@ -408,6 +418,7 @@ class StorageList(FileDirList):
         super().__init__()
         self.sort_keys = ['ctime', 'name', 'size', 'is_dir']
         self.sort_order = [('ctime', 0)]
+        self.reload()
     
     @staticmethod
     def get_dir_stats(entry):
