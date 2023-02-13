@@ -360,8 +360,8 @@ class FindList(AbstractItemsList):
             'Tracker[]' : list(self.trackers), 
             '_' : timestamp()
         }
-
-        response = requests.get(get_base_jackett_url() + 'indexers/all/results', params)
+                                                      #indexers/<filter>/results  ||| 'indexers/all/results'
+        response = requests.get(get_base_jackett_url() + 'indexers/status:healthy,test:passed/results', params)
         if response.status_code != 200: return
 
         results = response.json()['Results']
@@ -475,7 +475,11 @@ class TorrserverList(AbstractItemsList):
     }
     '''
     url = 'http://' + get_url('torrserver') + '/torrents'
-    
+   
+    def __init__(self) -> None:
+        super().__init__()
+        self.reload()
+
     def reload(self):
         self.items_list = []
         res = requests.post(self.url, json={'action' : 'list'})
@@ -685,11 +689,14 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         if data['this'].selected_index != -1:
             keyboard_markup = types.InlineKeyboardMarkup()
             row_btns = [
-                types.InlineKeyboardButton('->Transmission', callback_data='download'),
-                types.InlineKeyboardButton('->Torrserver', callback_data='torrserver'),
+                types.InlineKeyboardButton('->transmission', callback_data='download'),
+                types.InlineKeyboardButton('->torrserver', callback_data='torrserver'),
             ]
+            keyboard_markup.row(*row_btns)
+            row_btns = []
             if data['this'].selected_item['Link']:
-                row_btns.append(types.InlineKeyboardButton('->.torrent файл', callback_data='get_file'))
+                row_btns.append(types.InlineKeyboardButton('->.torrent', callback_data='get_file'))
+            row_btns.append(types.InlineKeyboardButton('->open page', callback_data='open_page'))
             keyboard_markup.row(*row_btns)
 
             await FindState.next()
@@ -721,6 +728,9 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
                 reply_markup = types.ReplyKeyboardRemove()
             )
 
+        elif answer_data == 'open_page':
+            await query.bot.send_message(query.from_user.id, 
+                selected['Details'], reply_markup = types.ReplyKeyboardRemove())
         await state.finish()
 
 
