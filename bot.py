@@ -48,6 +48,26 @@ setup = {}
 def timestamp():
     return str( int(datetime.utcnow().timestamp()) )
 
+def sizeof_fmt(num, suffix="B"):
+    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
+        if abs(num) < 1024.0:
+            return f"{num:3.1f}{unit}{suffix}"
+        num /= 1024.0
+    return f"{num:.1f}Yi{suffix}"
+
+def scantree(path, recurse = False):
+    for entry in os.scandir(path):
+        if recurse and entry.is_dir(follow_symlinks=False):
+            yield from scantree(entry.path, recurse)
+        else:
+            yield entry
+
+def find(self, callback):
+    for index, item in enumerate(self):
+        if callback(item):
+            return index
+    return -1
+
 def get_url(service_name):
     return settings[service_name]['host'] + ':' + str(settings[service_name]['port'])
 
@@ -57,19 +77,6 @@ def get_base_jackett_url():
 def get_configured_jackett_indexers():
     response = requests.get(get_base_jackett_url() + 'indexers?_=' + timestamp())
     return [indexer for indexer in response.json() if indexer['configured']]
-
-def sizeof_fmt(num, suffix="B"):
-    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
-        if abs(num) < 1024.0:
-            return f"{num:3.1f}{unit}{suffix}"
-        num /= 1024.0
-    return f"{num:.1f}Yi{suffix}"
-
-def find(self, callback):
-    for index, item in enumerate(self):
-        if callback(item):
-            return index
-    return -1
 
 def setup_tracker_buttons(setup_map):
     indexers = get_configured_jackett_indexers()
@@ -372,32 +379,7 @@ class TransmissionList(AbstractItemsList):
 
     def get_icon(self, item) -> str: 
         # list item must have: { 'is_dir' : bool, 'ext' : str }
-        if item['is_dir']:
-            if 'ext' in item:
-                return '📁' + self.get_ext_icon(item['ext'])
-            return '📁'
-        #return self.get_ext_icon( self.get_file_ext(item['name']) )
-        return self.get_ext_icon( item['ext'] )
-
-    @staticmethod
-    def get_dir_stats(entry):
-        ext_counter = __class__.max_key_counter()
-        sum_size = 0
-
-        def recurse(entry):
-            nonlocal sum_size, ext_counter
-            if entry.is_dir():
-                with os.scandir(entry.path) as dir_iter:
-                    for el in dir_iter:
-                        recurse(el)
-            else:
-                sum_size += entry.stat().st_size
-                ext = __class__.get_file_ext(entry.name)
-                ext_counter(ext)
-
-        recurse(entry)
-        return { 'ext' : ext_counter(), 'size' : sum_size }
-
+        return (item['is_dir'] and '📁' or '') + self.get_ext_icon( item['ext'] )
 
     def reload(self):
         torrents = transmission.get_torrents()
@@ -414,26 +396,30 @@ class TransmissionList(AbstractItemsList):
                 ext_counter( self.get_file_ext(file.name) )
             item['ext'] = ext_counter()
 
-        name_set = set(map(lambda e : e['name'], torrents_list))
+        torrent_names = set(map(lambda e : e['name'], torrents_list))
 
-        with os.scandir(settings['download_dir']) as it:
-            file_dir_list = [
-                {
+        for entry in scantree(settings['download_dir']):
+            if not entry.name in torrent_names:
+                ext_counter = self.max_key_counter()
+                size = 0
+                for file in scantree(entry.path, True) if entry.is_dir() else [entry]:
+                    ext_counter( self.get_file_ext(file.name) )
+                    size += file.stat().st_size
+
+                torrents_list.append({
                     'id' : None,
                     'uploadRatio': None,
                     'percentDone' : None,
                     'status' : 'no torrent',
                     'name' : entry.name, 
-                    'is_dir': entry.is_dir(), 
+                    'is_dir': entry.is_dir(),
                     'date' : datetime.fromtimestamp(entry.stat().st_ctime),
-                    **self.get_dir_stats(entry), # size & ext
-                } for entry in it if not entry.name in name_set
-            ]
-        torrents_list += file_dir_list
+                    'size' : size,
+                    'ext': ext_counter()
+                })
+
         self.items_list = torrents_list
         self.sort_items()
-
-
 
     def get_item_str(self, i : int) -> str:
         item = self.items[i]
