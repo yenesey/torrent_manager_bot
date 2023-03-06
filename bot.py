@@ -318,8 +318,8 @@ class FindList(AbstractItemsList):
            # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
 
-class FileDirList(AbstractItemsList):
-
+class TransmissionList(AbstractItemsList):
+    
     file_types = {
         'video' : {
             'extension' : ['avi', 'mkv', 'mp4', 'm4v', 'mov', 'bdmv', 'vob'],
@@ -335,6 +335,14 @@ class FileDirList(AbstractItemsList):
         }
     }
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir'), ('uploadRatio', 'r')]
+        self.sort_order = [('date', 1)]
+        self.filter_key = 'status'
+        self.stats = None
+        self.reload()
+        
     @staticmethod
     def get_file_ext(file_name : str) -> str:
         i = file_name.rfind('.')
@@ -356,7 +364,7 @@ class FileDirList(AbstractItemsList):
 
     @staticmethod
     def get_ext_icon(ext):
-        file_types = FileDirList.file_types
+        file_types = __class__.file_types
         for tp in file_types:
             if ext.lower() in file_types[tp]['extension']:
                 return file_types[tp]['icon']
@@ -371,20 +379,9 @@ class FileDirList(AbstractItemsList):
         #return self.get_ext_icon( self.get_file_ext(item['name']) )
         return self.get_ext_icon( item['ext'] )
 
-
-class TransmissionList(FileDirList):
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir'), ('uploadRatio', 'r')]
-        self.sort_order = [('date', 1)]
-        self.filter_key = 'status'
-        self.stats = None
-        self.reload()
-        
     @staticmethod
     def get_dir_stats(entry):
-        ext_counter = FileDirList.max_key_counter()
+        ext_counter = __class__.max_key_counter()
         sum_size = 0
 
         def recurse(entry):
@@ -395,7 +392,7 @@ class TransmissionList(FileDirList):
                         recurse(el)
             else:
                 sum_size += entry.stat().st_size
-                ext = FileDirList.get_file_ext(entry.name)
+                ext = __class__.get_file_ext(entry.name)
                 ext_counter(ext)
 
         recurse(entry)
@@ -412,7 +409,7 @@ class TransmissionList(FileDirList):
             item['is_dir'] = len(tr.files()) > 1
             item['date'] = datetime.fromtimestamp(item.pop('addedDate'))
             item['size'] = item.pop('totalSize')
-            ext_counter = FileDirList.max_key_counter()
+            ext_counter = self.max_key_counter()
             for file in tr.files():
                 ext_counter( self.get_file_ext(file.name) )
             item['ext'] = ext_counter()
