@@ -94,17 +94,12 @@ async def setup_bot_commands(dp):
     await dp.bot.set_my_commands([
         types.BotCommand('find',  'Find torrents'),
         types.BotCommand('list',  'List torrents'),
-        types.BotCommand('ls',    'List storage'),
         types.BotCommand('lsts',  'List Torrserver'),
         types.BotCommand('setup', 'Settings setup')
     ])
 
 class FindState(StatesGroup):
     begin = State()
-    select_item = State()
-    select_action = State()
-
-class LsState(StatesGroup):
     select_item = State()
     select_action = State()
 
@@ -289,6 +284,40 @@ class AbstractItemsList():
         await self.edit_text(query)
 
 
+class FindList(AbstractItemsList):
+    
+    def __init__(self, query_string = str, trackers = set) -> None:
+        super().__init__()
+        self.sort_keys = [('Size', 'size'), ('Seeders', 'seeds'), ('Peers', 'peers'), ('Link', 'lnk')]
+        self.sort_order = [('Size', 0), ('Seeders', 0), ('Peers', 0)]
+        self.filter_key = 'TrackerId'
+        self.query_string = query_string
+        self.trackers = trackers
+        self.reload()
+
+    def reload(self):
+        params = {
+            'apikey': settings['jackett']['api_key'], 
+            'Query' : self.query_string, 
+            'Tracker[]' : list(self.trackers), 
+            '_' : timestamp()
+        }
+                                                      #indexers/<filter>/results  ||| 'indexers/all/results'
+        response = requests.get(get_base_jackett_url() + 'indexers/status:healthy,test:passed/results', params)
+        if response.status_code != 200: return
+
+        results = response.json()['Results']
+        self.items_list = [el for el in results if el['Seeders'] > 0 or el['Peers'] > 0]
+        self.sort_items()
+
+    def get_item_str(self, i : int):
+        item = self.items[i]
+        return '<b>' + str(i) + '.</b> ' + item['Title'] + \
+            ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' + \
+            ' S/P[' +str(item['Seeders']) + '/' + str(item['Peers']) + ']'
+           # ('' if item['MagnetUri'] is None else 'U') + ']'              
+
+
 class FileDirList(AbstractItemsList):
 
     file_types = {
@@ -339,87 +368,20 @@ class FileDirList(AbstractItemsList):
             if 'ext' in item:
                 return '📁' + self.get_ext_icon(item['ext'])
             return '📁'
-        return self.get_ext_icon( self.get_file_ext(item['name']) )
+        #return self.get_ext_icon( self.get_file_ext(item['name']) )
+        return self.get_ext_icon( item['ext'] )
 
-
-class FindList(AbstractItemsList):
-    
-    def __init__(self, query_string = str, trackers = set) -> None:
-        super().__init__()
-        self.sort_keys = [('Size', 'size'), ('Seeders', 'seeds'), ('Peers', 'peers'), ('Link', 'lnk')]
-        self.sort_order = [('Size', 0), ('Seeders', 0), ('Peers', 0)]
-        self.filter_key = 'TrackerId'
-        self.query_string = query_string
-        self.trackers = trackers
-        self.reload()
-
-    def reload(self):
-        params = {
-            'apikey': settings['jackett']['api_key'], 
-            'Query' : self.query_string, 
-            'Tracker[]' : list(self.trackers), 
-            '_' : timestamp()
-        }
-                                                      #indexers/<filter>/results  ||| 'indexers/all/results'
-        response = requests.get(get_base_jackett_url() + 'indexers/status:healthy,test:passed/results', params)
-        if response.status_code != 200: return
-
-        results = response.json()['Results']
-        self.items_list = [el for el in results if el['Seeders'] > 0 or el['Peers'] > 0]
-        self.sort_items()
-
-    def get_item_str(self, i : int):
-        item = self.items[i]
-        return '<b>' + str(i) + '.</b> ' + item['Title'] + \
-            ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' + \
-            ' S/P[' +str(item['Seeders']) + '/' + str(item['Peers']) + ']'
-           # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
 class TransmissionList(FileDirList):
 
     def __init__(self) -> None:
         super().__init__()
-        self.sort_keys = [('addedDate', 'added'), 'name', ('totalSize' , 'size'), 'is_dir']
-        self.sort_order = [('addedDate', 0)]
+        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir'), ('uploadRatio', 'r')]
+        self.sort_order = [('date', 1)]
         self.filter_key = 'status'
+        self.stats = None
         self.reload()
-
-    def reload(self):
-        torrents = transmission.get_torrents()
-        attributes = ('id', 'name', 'percentDone', 'status', 'totalSize', 'uploadRatio', 'addedDate')
-        self.items_list = [{ key : getattr(tr, key) for key in attributes } for tr in torrents]
-        for i, tr in enumerate(torrents):
-            item = self.items_list[i]
-            item['is_dir'] = len(tr.files()) > 1
-            ext_counter = FileDirList.max_key_counter()
-            for file in tr.files():
-                ext_counter( self.get_file_ext(file.name) )
-            item['ext'] = ext_counter()
-        self.sort_items()
- 
-    def get_item_str(self, i : int):
-        item = self.items[i]
-        return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + item['name'] +\
-            ' [' + sizeof_fmt(item['totalSize']) + '] [' +\
-            str(round(item['percentDone'] * 100, 2)) + '%] [' +\
-            item['status'] + '] R[' + str(round(item['uploadRatio'], 2)) + ']'
-    
-    def get_footer_str(self) -> str:
-        total_size = 0
-        total_uploaded = 0
-        for item in self.items:
-            total_size += item['totalSize']
-            total_uploaded += item['totalSize'] * item['uploadRatio']
-        return '<b>' + 'total: ' + sizeof_fmt(total_size) + ' uploaded: ' + sizeof_fmt(total_uploaded) + '</b>'
-
-class StorageList(FileDirList):
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.sort_keys = ['ctime', 'name', 'size', 'is_dir']
-        self.sort_order = [('ctime', 0)]
-        self.reload()
-    
+        
     @staticmethod
     def get_dir_stats(entry):
         ext_counter = FileDirList.max_key_counter()
@@ -439,27 +401,70 @@ class StorageList(FileDirList):
         recurse(entry)
         return { 'ext' : ext_counter(), 'size' : sum_size }
 
+
     def reload(self):
+        torrents = transmission.get_torrents()
+        attributes = ('id', 'name', 'percentDone', 'status', 'totalSize', 'uploadRatio', 'addedDate')
+        torrents_list = [{ key : getattr(tr, key) for key in attributes } for tr in torrents]
+
+        for i, tr in enumerate(torrents):
+            item = torrents_list[i]
+            item['is_dir'] = len(tr.files()) > 1
+            item['date'] = datetime.fromtimestamp(item.pop('addedDate'))
+            item['size'] = item.pop('totalSize')
+            ext_counter = FileDirList.max_key_counter()
+            for file in tr.files():
+                ext_counter( self.get_file_ext(file.name) )
+            item['ext'] = ext_counter()
+
+        name_set = set(map(lambda e : e['name'], torrents_list))
+
         with os.scandir(settings['download_dir']) as it:
-            self.items_list = [
+            file_dir_list = [
                 {
-                    **self.get_dir_stats(entry), # size & ext
+                    'id' : None,
+                    'uploadRatio': None,
+                    'percentDone' : None,
+                    'status' : 'no torrent',
                     'name' : entry.name, 
                     'is_dir': entry.is_dir(), 
-                    'ctime' : datetime.fromtimestamp(entry.stat().st_ctime)  
-                } for entry in it 
+                    'date' : datetime.fromtimestamp(entry.stat().st_ctime),
+                    **self.get_dir_stats(entry), # size & ext
+                } for entry in it if not entry.name in name_set
             ]
+        torrents_list += file_dir_list
+        self.items_list = torrents_list
         self.sort_items()
-        self.disk_stats = psutil.disk_usage(settings['download_dir'])
- 
-    def get_item_str(self, i : int):
+
+
+
+    def get_item_str(self, i : int) -> str:
         item = self.items[i]
-        return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + item['name'] +\
-            ' [' + sizeof_fmt(item['size']) + ']'
+        key_map = {
+            'name' : lambda x: x,
+            'size' : lambda x: '[' + sizeof_fmt(x) + ']',
+            'percentDone' : lambda x: '[' + str(round(x * 100, 2)) + '%]',
+            'status' : lambda x: '[' + x + ']',
+            'uploadRatio' : lambda x: 'R[' + str(round(x, 2)) + ']'
+        }
+        result = ''
+        for key in key_map.keys():
+            if item[key]:
+                result += key_map[key]( item[key] ) + ' '
+        
+        return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + result
     
     def get_footer_str(self) -> str:
-        return '<b>' + 'used: ' + sizeof_fmt(self.disk_stats.used) + ' free: ' + sizeof_fmt(self.disk_stats.free) +\
-            '\ntotal: ' +  sizeof_fmt(self.disk_stats.total) + '</b>'
+        stats = {
+            'download' : sum(item['size'] for item in self.items),
+            'upload' : sum( (item['id'] and item['size'] * item['uploadRatio'] or 0) for item in self.items),
+            **psutil.disk_usage(settings['download_dir'])._asdict()
+        }
+        del stats['percent']
+        result = ''
+        for key in stats.keys():
+            result += ('\n' if key == 'total' else '') + key + ': ' + sizeof_fmt( stats[key] ) + ' '
+        return '<b>' + result + '</b>'
 
 
 class TorrserverList(AbstractItemsList):
@@ -500,7 +505,6 @@ class TorrserverList(AbstractItemsList):
         return res.status_code == 200
 
 
-
 ######################################################################
 class SecurityMiddleware(BaseMiddleware):
     async def on_process_message(self, message: types.Message, data: dict):
@@ -508,21 +512,12 @@ class SecurityMiddleware(BaseMiddleware):
             logging.info('unknown user %r', str(message.from_user.id))
             raise CancelHandler()
 
-
 ######################################################################
 @dp.message_handler(commands=['find'], state='*')
 async def cmd_find(message: types.Message, state: FSMContext):
     await cancel_handler(message, state)
     await FindState.begin.set()
     await message.reply('text to search:')
-
-@dp.message_handler(commands=['ls'], state='*')
-async def cmd_ls(message: types.Message, state: FSMContext):
-    await cancel_handler(message, state)
-    await LsState.select_item.set()
-    async with state.proxy() as data:
-        data['this'] = StorageList()
-        await data['this'].answer_message(message)
 
 @dp.message_handler(commands=['list'], state='*')
 async def cmd_list(message: types.Message, state: FSMContext):
@@ -572,8 +567,10 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             selected = data['this'].selected_item
 
             text_and_data = [('Remove', 'remove')]
-            if selected['status'] == 'stopped': text_and_data.append( ('Start', 'start')  )
-            if selected['status'] in ['downloading', 'seeding']: text_and_data.append( ('Pause', 'pause')  )
+
+            if 'id' in selected:
+                if selected['status'] == 'stopped': text_and_data.append( ('Start', 'start')  )
+                if selected['status'] in ['downloading', 'seeding']: text_and_data.append( ('Pause', 'pause')  )
 
             row_btns = (types.InlineKeyboardButton(text, callback_data=data) for text, data in text_and_data)
             keyboard_markup.row(*row_btns)
@@ -587,14 +584,24 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
 
     answer_data = query.data
     async with state.proxy() as data:
-        torrent_id = data['this'].selected_item['id']
+        selected = data['this'].selected_item
         message = ''
+
         if answer_data == 'remove':
-            transmission.remove_torrent(torrent_id, delete_data = True)
+            if selected['id']: # this is a torrent
+                transmission.remove_torrent(selected['id'], delete_data = True)
+            else: # remove just file(s)
+                path_name = os.path.join(settings['download_dir'], selected['name'] )
+                if selected['is_dir']:
+                    rmtree(path_name, ignore_errors = True)
+                else:
+                    os.remove(path_name)
             message = 'removed'
+
         elif answer_data == 'pause':
             transmission.stop_torrent(torrent_id)    
             message = 'paused'
+
         elif answer_data == 'start':
             transmission.start_torrent(torrent_id)
             message = 'started'    
@@ -631,37 +638,6 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             await state.finish()
 
 
-##################### ls  #################################################
-
-@dp.callback_query_handler(state=LsState.select_item)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        await data['this'].handle_callback(query)
-        if data['this'].selected_index != -1:
-            keyboard_markup = types.InlineKeyboardMarkup()
-            keyboard_markup.add(types.InlineKeyboardButton('Remove', callback_data = 'remove'))
-            await LsState.next()
-            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
-
-@dp.callback_query_handler(state = LsState.select_action)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
-    await query.answer()  # don't forget to answer callback query as soon as possible
-
-    answer_data = query.data
-    async with state.proxy() as data:
-        selected = data['this'].selected_item
-        path_name = os.path.join(settings['download_dir'], selected['name'] )
-        message = ''
-        if answer_data == 'remove':
-            if selected['is_dir']:
-                rmtree(path_name, ignore_errors = True)
-            else:
-                os.remove(path_name)
-            message = 'removed'
-
-        await query.bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
-        await state.finish()
-
 ##################### FIND #################################################
 
 @dp.message_handler(state = FindState.begin)
@@ -695,8 +671,9 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             keyboard_markup.row(*row_btns)
             row_btns = []
             if data['this'].selected_item['Link']:
-                row_btns.append(types.InlineKeyboardButton('->.torrent', callback_data='get_file'))
-            row_btns.append(types.InlineKeyboardButton('->open page', callback_data='open_page'))
+                row_btns.append(types.InlineKeyboardButton('.torrent', callback_data='get_file'))
+            row_btns.append(types.InlineKeyboardButton('magnet', callback_data='get_magnet'))
+            row_btns.append(types.InlineKeyboardButton('web page', callback_data='open_page'))
             keyboard_markup.row(*row_btns)
 
             await FindState.next()
@@ -720,7 +697,11 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             response = requests.get(selected['Link'])
             file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent' )
             await query.bot.send_document(query.from_user.id, document = file, reply_markup = types.ReplyKeyboardRemove())
-        
+
+        elif answer_data == 'get_magnet':
+            await query.bot.send_message(query.from_user.id, selected['MagnetUri'], reply_markup = types.ReplyKeyboardRemove())
+
+
         elif answer_data == 'torrserver':
             res = TorrserverList.add_item(TorrserverList, selected)
             await query.bot.send_message(query.from_user.id, 
