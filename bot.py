@@ -12,7 +12,7 @@ from aiogram.dispatcher.handler import CancelHandler
 #from aiogram.utils import markdown
 from aiogram.utils.exceptions import MessageNotModified
 
-from collections import Counter 
+from collections import Counter
 import requests
 from io import BytesIO
 import json
@@ -62,7 +62,7 @@ def get_file_ext(file_name : str) -> str:
 
 def scantree(path, recursive = False):
     for entry in os.scandir(path):
-        if recurse and entry.is_dir(follow_symlinks=False):
+        if recursive and entry.is_dir(follow_symlinks=False):
             yield from scantree(entry.path, recursive)
         else:
             yield entry
@@ -375,10 +375,10 @@ class TransmissionList(AbstractItemsList):
             item['is_dir'] = len(tr.files()) > 1
             item['date'] = datetime.fromtimestamp(item.pop('addedDate'))
             item['size'] = item.pop('totalSize')
-            ext_dict = Counter() 
+            ext_dict = Counter()
             for file in tr.files():
                 ext_dict[ get_file_ext(file.name) ] += 1
-            item['ext'] = max(ext_dict.items(), key = lambda x: x[1])[0] # most frequent extension (for directory)
+            item['ext'] = ext_dict and ext_dict.most_common()[0][0] or '' # most frequent extension (for directory)
 
         torrent_names = set(map(lambda e : e['name'], torrents_list))
 
@@ -399,7 +399,7 @@ class TransmissionList(AbstractItemsList):
                     'is_dir': entry.is_dir(),
                     'date' : datetime.fromtimestamp(entry.stat().st_ctime),
                     'size' : size,
-                    'ext': max(ext_dict.items(), key = lambda x: x[1])[0] # most frequent extension (for directory)
+                    'ext': ext_dict and ext_dict.most_common()[0][0] or '' # most frequent extension (for directory)
                 })
 
         self.items_list = torrents_list
@@ -566,11 +566,11 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
             message = 'removed'
 
         elif answer_data == 'pause':
-            transmission.stop_torrent(torrent_id)    
+            transmission.stop_torrent(selected['id'])    
             message = 'paused'
 
         elif answer_data == 'start':
-            transmission.start_torrent(torrent_id)
+            transmission.start_torrent(selected['id'])
             message = 'started'    
 
         await query.bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
