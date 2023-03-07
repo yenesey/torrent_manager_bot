@@ -12,6 +12,7 @@ from aiogram.dispatcher.handler import CancelHandler
 #from aiogram.utils import markdown
 from aiogram.utils.exceptions import MessageNotModified
 
+from collections import Counter 
 import requests
 from io import BytesIO
 import json
@@ -55,10 +56,14 @@ def sizeof_fmt(num, suffix="B"):
         num /= 1024.0
     return f"{num:.1f}Yi{suffix}"
 
-def scantree(path, recurse = False):
+def get_file_ext(file_name : str) -> str:
+    i = file_name.rfind('.')
+    return file_name[i+1:] if i != -1 else ''
+
+def scantree(path, recursive = False):
     for entry in os.scandir(path):
         if recurse and entry.is_dir(follow_symlinks=False):
-            yield from scantree(entry.path, recurse)
+            yield from scantree(entry.path, recursive)
         else:
             yield entry
 
@@ -326,52 +331,31 @@ class FindList(AbstractItemsList):
 
 
 class TransmissionList(AbstractItemsList):
-    
-    file_types = {
-        'video' : {
-            'extension' : ['avi', 'mkv', 'mp4', 'm4v', 'mov', 'bdmv', 'vob'],
-            'icon' : '🎬'
-        },
-        'music' :{
-            'extension' : ['mp3', 'wav', 'm3u', 'ogg'],
-            'icon' : '🎧'
-        },
-        'other' : {
-            'extension' : [],
-            'icon' : '📄'
-        }
-    }
 
     def __init__(self) -> None:
         super().__init__()
         self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir'), ('uploadRatio', 'r')]
-        self.sort_order = [('date', 1)]
+        self.sort_order = [('date', 0)]
         self.filter_key = 'status'
         self.stats = None
         self.reload()
-        
-    @staticmethod
-    def get_file_ext(file_name : str) -> str:
-        i = file_name.rfind('.')
-        return file_name[i+1:] if i != -1 else ''
-
-    @staticmethod
-    def max_key_counter():
-        keys = {}
-        max_count = 0
-        max_key = ''
-        def count(key = '_'):
-            nonlocal keys, max_count, max_key
-            keys[key] = keys[key] + 1 if key in keys else 1
-            if max_count < keys[key]: 
-                max_count = keys[key]
-                max_key = key
-            return max_key
-        return count
-
+    
     @staticmethod
     def get_ext_icon(ext):
-        file_types = __class__.file_types
+        file_types = {
+            'video' : {
+                'extension' : ['avi', 'mkv', 'mp4', 'm4v', 'mov', 'bdmv', 'vob'],
+                'icon' : '🎬'
+            },
+            'music' :{
+                'extension' : ['mp3', 'wav', 'm3u', 'ogg'],
+                'icon' : '🎧'
+            },
+            'other' : {
+                'extension' : [],
+                'icon' : '📄'
+            }
+        }
         for tp in file_types:
             if ext.lower() in file_types[tp]['extension']:
                 return file_types[tp]['icon']
@@ -391,19 +375,19 @@ class TransmissionList(AbstractItemsList):
             item['is_dir'] = len(tr.files()) > 1
             item['date'] = datetime.fromtimestamp(item.pop('addedDate'))
             item['size'] = item.pop('totalSize')
-            ext_counter = self.max_key_counter()
+            ext_dict = Counter() 
             for file in tr.files():
-                ext_counter( self.get_file_ext(file.name) )
-            item['ext'] = ext_counter()
+                ext_dict[ get_file_ext(file.name) ] += 1
+            item['ext'] = max(ext_dict.items(), key = lambda x: x[1])[0] # most frequent extension (for directory)
 
         torrent_names = set(map(lambda e : e['name'], torrents_list))
 
         for entry in scantree(settings['download_dir']):
             if not entry.name in torrent_names:
-                ext_counter = self.max_key_counter()
+                ext_dict = Counter()
                 size = 0
-                for file in scantree(entry.path, True) if entry.is_dir() else [entry]:
-                    ext_counter( self.get_file_ext(file.name) )
+                for file in scantree(entry.path, recursive = True) if entry.is_dir() else [entry]:
+                    ext_dict[ get_file_ext(file.name) ] += 1
                     size += file.stat().st_size
 
                 torrents_list.append({
@@ -415,7 +399,7 @@ class TransmissionList(AbstractItemsList):
                     'is_dir': entry.is_dir(),
                     'date' : datetime.fromtimestamp(entry.stat().st_ctime),
                     'size' : size,
-                    'ext': ext_counter()
+                    'ext': max(ext_dict.items(), key = lambda x: x[1])[0] # most frequent extension (for directory)
                 })
 
         self.items_list = torrents_list
