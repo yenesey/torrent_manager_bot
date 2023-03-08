@@ -370,6 +370,7 @@ class TransmissionList(AbstractItemsList):
         attributes = ('id', 'name', 'percentDone', 'status', 'totalSize', 'uploadRatio', 'addedDate')
         torrents_list = [{ key : getattr(tr, key) for key in attributes } for tr in torrents]
 
+        torrent_names = set()
         for i, tr in enumerate(torrents):
             item = torrents_list[i]
             item['is_dir'] = len(tr.files()) > 1
@@ -379,8 +380,7 @@ class TransmissionList(AbstractItemsList):
             for file in tr.files():
                 ext_dict[ get_file_ext(file.name) ] += 1
             item['ext'] = ext_dict and ext_dict.most_common()[0][0] or '' # most frequent extension (for directory)
-
-        torrent_names = set(map(lambda e : e['name'], torrents_list))
+            torrent_names.add(item['name'])
 
         for entry in scantree(settings['download_dir']):
             if not entry.name in torrent_names:
