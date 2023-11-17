@@ -81,7 +81,7 @@ def get_base_jackett_url():
 
 def get_configured_jackett_indexers():
     response = requests.get(get_base_jackett_url() + 'indexers?_=' + timestamp())
-    return [indexer for indexer in response.json() if indexer['configured']]
+    return [indexer for indexer in response.json() if indexer['configured'] and indexer['last_error'] == '']
 
 def setup_tracker_buttons(setup_map):
     indexers = get_configured_jackett_indexers()
@@ -326,7 +326,7 @@ class FindList(AbstractItemsList):
         item = self.items[i]
         return '<b>' + str(i) + '.</b> ' + item['Title'] + \
             ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' + \
-            ' S/P[' +str(item['Seeders']) + '/' + str(item['Peers']) + ']'
+            ' [' +str(item['Seeders']) + 's/' + str(item['Peers']) + 'p]'
            # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
 
@@ -455,7 +455,8 @@ class TorrserverList(AbstractItemsList):
     def reload(self):
         self.items_list = []
         res = requests.post(self.url, json={'action' : 'list'})
-        self.items_list = [{ 'name' : item['title'], 'size' : item['torrent_size'], 'hash' : item['hash'] } for item in  res.json()]
+        logging.info(res.json())
+        self.items_list = [{ 'name' : item['title'], 'size' : item['torrent_size'] if 'torrent_size' in item else 0, 'hash' : item['hash'] } for item in  res.json()]
 
     def get_item_str(self, i : int):
         item = self.items[i]
@@ -611,8 +612,9 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
 async def process_find(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         user = message.from_user.id
-       
+
         torrents = FindList(message.text, setup[user]['trackers'] if user in setup else set({}))
+        logging.info(str(user) + ', ' + message.text + ', found:' + str(len(torrents.items)) + '')
 
         if len(torrents.items) == 0:
             await message.reply('Nothing found...', parse_mode=ParseMode.HTML)
@@ -625,7 +627,7 @@ async def process_find(message: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(state = FindState.select_item)
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
-    #await query.answer()     # always answer callback queries, even if you have nothing to say
+    await query.answer()     # always answer callback queries, even if you have nothing to say
 
     async with state.proxy() as data:
         await data['this'].handle_callback(query)
@@ -679,6 +681,8 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
         elif answer_data == 'open_page':
             await query.bot.send_message(query.from_user.id, 
                 selected['Details'], reply_markup = types.ReplyKeyboardRemove())
+        
+        # await state.set_state(FindState.select_item)
         await state.finish()
 
 
