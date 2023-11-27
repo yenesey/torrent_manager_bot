@@ -100,12 +100,12 @@ def get_configured_jackett_indexers():
 
 def setup_tracker_buttons(setup_map):
     indexers = get_configured_jackett_indexers()
-    keyboard_markup = ReplyKeyboardMarkup(row_width=3)
+    builder = InlineKeyboardBuilder()
     text_and_data = [ ( ('✓' if ind['id'] in setup_map else '') + ind['name'], ind['id']) for ind in indexers ]
-    row_btns = (KeyboardButton(text, callback_data=data) for text, data in text_and_data)
-    keyboard_markup.row(*row_btns)
-    keyboard_markup.add(KeyboardButton('Ok!', callback_data = 'ok'))
-    return keyboard_markup
+    row_btns = (InlineKeyboardButton(text=text, callback_data=data) for text, data in text_and_data)
+    builder.row(*row_btns)
+    builder.row(InlineKeyboardButton(text='Ok!', callback_data = 'ok'))
+    return builder.as_markup()
 
 # configure logging
 logging.basicConfig(
@@ -502,41 +502,7 @@ bot = Bot(token = settings['telegram_api_token'])
 dp = Dispatcher( storage = MemoryStorage() )
 # dp.update.outer_middleware( SecurityMiddleware() )
 
-
-
 ######################################################################
-@dp.message(Command('find'))
-async def cmd_find(message: Message, state: FSMContext):
-    await cancel_handler(message, state)
-    await state.set_state(FindState.begin)
-    # await state.set_data({'this' : None})
-    await message.reply('text to search:')
-
-@dp.message(Command('list'))
-async def cmd_list(message: Message, state: FSMContext):
-    # await cancel_handler(message, state)
-    _this = TransmissionList()
-    await state.set_state(ListState.select_item)
-    await state.set_data({'this' : _this})
-    await _this.answer_message(message)
-
-@dp.message(Command('lsts'))
-async def cmd_ls(message: Message, state: FSMContext):
-    await cancel_handler(message, state)
-    await LstsState.select_item.set()
-    async with state.proxy() as data:
-        data['this'] = TorrserverList()
-        await data['this'].answer_message(message)
-
-@dp.message(Command('setup'))
-async def cmd_setup(message: Message, state: FSMContext):
-    await cancel_handler(message, state)
-    await Setup.begin.set()
-    keyboard_markup = ReplyKeyboardMarkup(row_width=3)
-    text_and_data = [('Trackers', 'trackers')]
-    row_btns = (KeyboardButton(text, callback_data=data) for text, data in text_and_data)
-    keyboard_markup.row(*row_btns)
-    await message.reply('Settings:', reply_markup = keyboard_markup)
 
 @dp.message(Command('cancel'))
 # @dp.message(Text(equals='cancel', ignore_case=True), state='*')
@@ -546,10 +512,18 @@ async def cancel_handler(message: Message, state: FSMContext):
         return
 
     logging.info('Cancelling state %r', current_state)
-    await state.finish()
+    await state.clear()
     #await message.reply('Cancelled:' + current_state, reply_markup=types.ReplyKeyboardRemove())
 
 ##################### list  #################################################
+
+@dp.message(Command('list'))
+async def cmd_list(message: Message, state: FSMContext):
+    # await cancel_handler(message, state)
+    _this = TransmissionList()
+    await state.set_state(ListState.select_item)
+    await state.set_data({'this' : _this})
+    await _this.answer_message(message)
 
 @dp.callback_query(StateFilter(ListState.select_item))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
@@ -603,6 +577,16 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 
 ##################### lsts  #################################################
 
+@dp.message(Command('lsts'))
+async def cmd_ls(message: Message, state: FSMContext):
+    await cancel_handler(message, state)
+    await state.set_state(LstsState.select_item)
+    data = {
+       'this': TorrserverList()
+    }
+    await state.set_data(data)
+    await data['this'].answer_message(message)
+
 @dp.callback_query(StateFilter(LstsState.select_item))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -611,7 +595,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         builder = InlineKeyboardBuilder()
         builder.row(*[InlineKeyboardButton(text='Remove', callback_data='remove')])
         await state.set_state(LstsState.select_action)
-        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(),  reply_markup=builder.as_markup() )
+        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=builder.as_markup() )
 
 @dp.callback_query(StateFilter(LstsState.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
@@ -627,8 +611,13 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         )
         await state.clear()
 
-
 ##################### find #################################################
+
+@dp.message(Command('find'))
+async def cmd_find(message: Message, state: FSMContext):
+    await cancel_handler(message, state)
+    await state.set_state(FindState.begin)
+    await message.reply('text to search:')
 
 @dp.message(StateFilter(FindState.begin))
 async def process_find(message: Message, state: FSMContext):
@@ -639,12 +628,12 @@ async def process_find(message: Message, state: FSMContext):
         await message.reply('Nothing found...', parse_mode = ParseMode.HTML)
         return
     data = {
-       'this': torrents
+       'this': torrents,
+       'message': message
     }
     await state.set_data(data)
     await torrents.answer_message(message)
     await state.set_state(FindState.select_item)
-
 
 @dp.callback_query(StateFilter(FindState.select_item))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
@@ -668,7 +657,6 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 
         await state.set_state(FindState.select_action)
         await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode = ParseMode.HTML, reply_markup=builder.as_markup())
-
 
 @dp.callback_query(StateFilter(FindState.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
@@ -704,12 +692,23 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         await query.bot.send_message(query.from_user.id, 
             selected['Details'], reply_markup = ReplyKeyboardRemove())
         
-    # await data['this'].edit_text(query)
-    # await state.set_state(FindState.select_item)
-    await state.clear()
-
+    data['this'].selected_index  = -1
+    data['this'].selected_item = None
+    await data['this'].answer_message(data['message'])
+    await state.set_state(FindState.select_item)
+    # await state.clear()
 
 ##################### setup #################################################
+
+@dp.message(Command('setup'))
+async def cmd_setup(message: Message, state: FSMContext):
+    await cancel_handler(message, state)
+    await state.set_state(Setup.begin)
+    builder = InlineKeyboardBuilder()
+    row_btns = (InlineKeyboardButton(text=text, callback_data=data) for text, data in  [('Trackers', 'trackers')] )
+    builder.row(*row_btns)
+    await message.reply('Settings:', reply_markup = builder.as_markup())
+
 @dp.callback_query(StateFilter(Setup.begin))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     global setup
@@ -723,15 +722,14 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 
     if answer_data == 'trackers':
         setup[user]['trackers'] = set(setup[user]['trackers'] ^ set({answer_data}))
-        keyboard_markup = setup_tracker_buttons(setup[user]['trackers'])
-        await Setup.setup_trackers.set()
-        await query.bot.send_message(user, 'Select tracker', parse_mode=ParseMode.HTML, reply_markup = keyboard_markup )
+        keyboard = setup_tracker_buttons(setup[user]['trackers'])
+        await state.set_state(Setup.setup_trackers)
+        await query.bot.send_message(user, 'Select tracker', parse_mode=ParseMode.HTML, reply_markup = keyboard )
         #await bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
         return
  
-    await query.bot.send_message(user, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+    await query.bot.send_message(user, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = ReplyKeyboardRemove() )
     await state.finish()
-
 
 @dp.callback_query(StateFilter(Setup.setup_trackers))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
@@ -740,7 +738,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     answer_data = query.data
 
     if answer_data == 'ok':
-        await query.bot.send_message(query.from_user.id, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+        await query.bot.send_message(query.from_user.id, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = ReplyKeyboardRemove() )
         await state.finish()
         return
 
@@ -751,8 +749,8 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 
     setup[user]['trackers'] = set(setup[user]['trackers'] ^ set({answer_data}))
 
-    keyboard_markup = setup_tracker_buttons(setup[user]['trackers'])
-    await query.bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
+    keyboard = setup_tracker_buttons(setup[user]['trackers'])
+    await query.bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard)
 
 ##############################################################
 
