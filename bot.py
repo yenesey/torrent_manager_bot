@@ -332,13 +332,18 @@ class FindList(AbstractItemsList):
 
         results = response.json()['Results']
         self.items_list = [el for el in results if el['Seeders'] > 0 or el['Peers'] > 0]
+        for item in self.items_list:
+            item['transmission'] = False
+            item['torrserver'] = False
         self.sort_items()
 
     def get_item_str(self, i : int):
         item = self.items[i]
         return '<b>' + str(i) + '.</b> ' + item['Title'] + \
             ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' + \
-            ' [' +str(item['Seeders']) + 's/' + str(item['Peers']) + 'p]'
+            ' [' +str(item['Seeders']) + 's/' + str(item['Peers']) + 'p]' +\
+            (' [+transmission]' if item['transmission'] else '') +\
+            (' [+torrserver]' if item['torrserver'] else '')
            # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
 
@@ -495,17 +500,17 @@ class SecurityMiddleware(BaseMiddleware):
     ) -> Any:
         user = data["event_from_user"]
         if (user.id not in settings['users_list']):
-            raise CancelHandler()
+            logging.info('Unknown user: ' + str(user.id))
+            return   
+        return await handler(event, data)
 
 ######################################################################
 bot = Bot(token = settings['telegram_api_token'])
 dp = Dispatcher( storage = MemoryStorage() )
-# dp.update.outer_middleware( SecurityMiddleware() )
-
+dp.update.outer_middleware( SecurityMiddleware() )
 ######################################################################
 
 @dp.message(Command('cancel'))
-# @dp.message(Text(equals='cancel', ignore_case=True), state='*')
 async def cancel_handler(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
@@ -664,6 +669,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     await query.answer(answer_data)
     data = await state.get_data()
 
+    message = None
     selected = data['this'].selected_item
     if answer_data == 'download':
         if not selected['Link'] is None:
@@ -671,11 +677,12 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
             transmission.add_torrent(BytesIO(response.content))
         else:
             transmission.add_torrent(selected['MagnetUri'])
-        await query.bot.send_message(query.from_user.id, 'Added to downloads', reply_markup = ReplyKeyboardRemove() )
+        message = 'Added to downloads'
+        selected['transmission'] = True
 
     elif answer_data == 'get_file':
         response = requests.get(selected['Link'])
-        file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent' )
+        file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent')
         await query.bot.send_document(query.from_user.id, document = file, reply_markup = ReplyKeyboardRemove())
 
     elif answer_data == 'get_magnet':
@@ -683,15 +690,17 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 
     elif answer_data == 'torrserver':
         res = TorrserverList.add_item(TorrserverList, selected)
-        await query.bot.send_message(query.from_user.id, 
-            ('Added to Torrserver list' if res  else 'Failed to add'), 
-            reply_markup = ReplyKeyboardRemove()
-        )
-
+        if res:
+            selected['torrserver'] = True
+            message = 'Added to Torrserver list'
+        else:
+            message = 'Failed to add'
+ 
     elif answer_data == 'open_page':
-        await query.bot.send_message(query.from_user.id, 
-            selected['Details'], reply_markup = ReplyKeyboardRemove())
-        
+        message = selected['Details']
+
+    if message:
+        await query.bot.send_message(query.from_user.id, message, reply_markup = ReplyKeyboardRemove() )
     data['this'].selected_index  = -1
     data['this'].selected_item = None
     await data['this'].answer_message(data['message'])
