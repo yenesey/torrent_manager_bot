@@ -1,16 +1,31 @@
 #!/usr/bin/python3
-
+import asyncio
 import logging
+from typing import Any, Callable, Dict, Awaitable
 
-from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import ParseMode, InputFile
-from aiogram.dispatcher import FSMContext
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.dispatcher.handler import CancelHandler
-#from aiogram.utils import markdown
-from aiogram.utils.exceptions import MessageNotModified
+
+# aiogram
+from aiogram.types import TelegramObject
+from aiogram import Bot, Dispatcher, F, Router, html
+from aiogram.enums import ParseMode
+from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types.inline_keyboard_button import InlineKeyboardButton
+from aiogram.types import (
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    InputFile,
+    CallbackQuery
+)
+
+from aiogram.exceptions import TelegramBadRequest
+# end aiogram
 
 from collections import Counter
 import requests
@@ -81,16 +96,16 @@ def get_base_jackett_url():
 
 def get_configured_jackett_indexers():
     response = requests.get(get_base_jackett_url() + 'indexers?_=' + timestamp())
-    return [indexer for indexer in response.json() if indexer['configured']]
+    return [indexer for indexer in response.json() if indexer['configured'] and indexer['last_error'] == '']
 
 def setup_tracker_buttons(setup_map):
     indexers = get_configured_jackett_indexers()
-    keyboard_markup = types.InlineKeyboardMarkup(row_width=3)
+    builder = InlineKeyboardBuilder()
     text_and_data = [ ( ('✓' if ind['id'] in setup_map else '') + ind['name'], ind['id']) for ind in indexers ]
-    row_btns = (types.InlineKeyboardButton(text, callback_data=data) for text, data in text_and_data)
-    keyboard_markup.row(*row_btns)
-    keyboard_markup.add(types.InlineKeyboardButton('Ok!', callback_data = 'ok'))
-    return keyboard_markup
+    row_btns = (InlineKeyboardButton(text=text, callback_data=data) for text, data in text_and_data)
+    builder.row(*row_btns)
+    builder.row(InlineKeyboardButton(text='Ok!', callback_data = 'ok'))
+    return builder.as_markup()
 
 # configure logging
 logging.basicConfig(
@@ -98,9 +113,6 @@ logging.basicConfig(
     level = logging.INFO,
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-
-# Initialize bot and dispatcher
-dp = Dispatcher( Bot(token = settings['telegram_api_token']) , storage = MemoryStorage())
 
 async def setup_bot_commands(dp):
     await dp.bot.set_my_commands([
@@ -208,21 +220,21 @@ class AbstractItemsList():
             return True
         return False
 
-    def text_and_buttons(self) -> tuple[str, types.InlineKeyboardMarkup]:
+    def text_and_buttons(self) -> tuple[str, ReplyKeyboardMarkup]:
         hr = '\n<b>⸻⸻⸻</b>\n'
         self.set_page_bounds()
-        keyboard_markup = types.InlineKeyboardMarkup(row_width = 3)
+        builder = InlineKeyboardBuilder()
 
         row_btns = []
         text = self.get_header_str() + hr
         for i in range(self.from_index, self.to_index):
             text = text + ('\n' if i > self.from_index else '') + self.get_item_str(i) + ('\n' if i < self.to_index -1 else '')
-            row_btns.append( types.InlineKeyboardButton(text = str(i), callback_data = str(i)) )
+            row_btns.append( InlineKeyboardButton(text = str(i), callback_data = str(i)) )
         footer_str = self.get_footer_str()
         if footer_str: text = text + hr + footer_str
 
         # number buttons
-        keyboard_markup.row(*row_btns) 
+        builder.row(*row_btns) 
         
         # sort buttons
         if len(self.sort_keys) > 0:
@@ -232,12 +244,12 @@ class AbstractItemsList():
                 btn_text = alias
                 if (key, 0) in self.sort_order: btn_text += '↓'
                 if (key, 1) in self.sort_order: btn_text += '↑'
-                row_btns.append( types.InlineKeyboardButton(text = btn_text, callback_data = '#order_by#' + key ) )
-            keyboard_markup.row(*row_btns) 
+                row_btns.append( InlineKeyboardButton(text = btn_text, callback_data = '#order_by#' + key ) )
+            builder.row(*row_btns) 
 
         if self.filter_key:
-            keyboard_markup.row(*[
-                types.InlineKeyboardButton(
+            builder.row(*[
+                InlineKeyboardButton(
                     text = ('✓' if key in self.filter else '') + key, 
                     callback_data = '#filter#' + key
                 ) for key in self.classify_items()
@@ -245,30 +257,30 @@ class AbstractItemsList():
 
         # page control buttons        
         btn_data = {'prev_page': '⬅', 'next_page': '➡', 'reload': '🔁', 'dummy': '-'}
-        btn = { key: types.InlineKeyboardButton(text = btn_data[key], callback_data = key) for key in btn_data }
-        keyboard_markup.row( # control buttons
+        btn = { key: InlineKeyboardButton(text = btn_data[key], callback_data = key) for key in btn_data }
+        builder.row( # control buttons
             btn['prev_page'] if self.page_num > 0 else btn['dummy'],
             # reload active only when implemented in subclass
             btn['reload'] if getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload') else btn['dummy'],
             btn['next_page'] if self.page_num + 1 < (len(self.items) / self.items_on_page) else btn['dummy']
         )
-        return text, keyboard_markup
+        return text, builder.as_markup()
 
-    async def answer_message(self, message: types.Message):
+    async def answer_message(self, message: Message):
         text, keyboard_markup = self.text_and_buttons()
         try:
             await message.answer(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
-        except MessageNotModified as e:
+        except TelegramBadRequest as e:
             logging.info('Message is not modified')
 
-    async def edit_text(self, query: types.CallbackQuery):
+    async def edit_text(self, query: CallbackQuery):
         text, keyboard_markup = self.text_and_buttons()
         try:
             await query.message.edit_text(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
-        except MessageNotModified as e:
+        except TelegramBadRequest as e:
             logging.info('Message is not modified')
 
-    async def handle_callback(self, query: types.CallbackQuery):
+    async def handle_callback(self, query: CallbackQuery):
         await query.answer(query.data)
         if query.data in ['next_page', 'prev_page', 'reload']: 
             getattr(self, query.data)() # call proper method
@@ -320,13 +332,18 @@ class FindList(AbstractItemsList):
 
         results = response.json()['Results']
         self.items_list = [el for el in results if el['Seeders'] > 0 or el['Peers'] > 0]
+        for item in self.items_list:
+            item['transmission'] = False
+            item['torrserver'] = False
         self.sort_items()
 
     def get_item_str(self, i : int):
         item = self.items[i]
         return '<b>' + str(i) + '.</b> ' + item['Title'] + \
             ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' + \
-            ' S/P[' +str(item['Seeders']) + '/' + str(item['Peers']) + ']'
+            ' [' +str(item['Seeders']) + 's/' + str(item['Peers']) + 'p]' +\
+            (' [+transmission]' if item['transmission'] else '') +\
+            (' [+torrserver]' if item['torrserver'] else '')
            # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
 
@@ -455,7 +472,8 @@ class TorrserverList(AbstractItemsList):
     def reload(self):
         self.items_list = []
         res = requests.post(self.url, json={'action' : 'list'})
-        self.items_list = [{ 'name' : item['title'], 'size' : item['torrent_size'], 'hash' : item['hash'] } for item in  res.json()]
+        logging.info(res.json())
+        self.items_list = [{ 'name' : item['title'], 'size' : item['torrent_size'] if 'torrent_size' in item else 0, 'hash' : item['hash'] } for item in  res.json()]
 
     def get_item_str(self, i : int):
         item = self.items[i]
@@ -474,217 +492,234 @@ class TorrserverList(AbstractItemsList):
 
 ######################################################################
 class SecurityMiddleware(BaseMiddleware):
-    async def on_process_message(self, message: types.Message, data: dict):
-        if (message.from_user.id not in settings['users_list']):
-            logging.info('unknown user %r', str(message.from_user.id))
-            raise CancelHandler()
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: Dict[str, Any]
+    ) -> Any:
+        user = data["event_from_user"]
+        if (user.id not in settings['users_list']):
+            logging.info('Unknown user: ' + str(user.id))
+            return   
+        return await handler(event, data)
 
 ######################################################################
-@dp.message_handler(commands=['find'], state='*')
-async def cmd_find(message: types.Message, state: FSMContext):
-    await cancel_handler(message, state)
-    await FindState.begin.set()
-    await message.reply('text to search:')
+bot = Bot(token = settings['telegram_api_token'])
+dp = Dispatcher( storage = MemoryStorage() )
+dp.update.outer_middleware( SecurityMiddleware() )
+######################################################################
 
-@dp.message_handler(commands=['list'], state='*')
-async def cmd_list(message: types.Message, state: FSMContext):
-    await cancel_handler(message, state)
-    await ListState.select_item.set()
-    async with state.proxy() as data: 
-        data['this'] = TransmissionList()
-        await data['this'].answer_message(message)
-
-@dp.message_handler(commands=['lsts'], state='*')
-async def cmd_ls(message: types.Message, state: FSMContext):
-    await cancel_handler(message, state)
-    await LstsState.select_item.set()
-    async with state.proxy() as data:
-        data['this'] = TorrserverList()
-        await data['this'].answer_message(message)
-
-@dp.message_handler(commands=['setup'], state='*')
-async def cmd_setup(message: types.Message, state: FSMContext):
-    await cancel_handler(message, state)
-    await Setup.begin.set()
-    keyboard_markup = types.InlineKeyboardMarkup(row_width=3)
-    text_and_data = [('Trackers', 'trackers')]
-    row_btns = (types.InlineKeyboardButton(text, callback_data=data) for text, data in text_and_data)
-    keyboard_markup.row(*row_btns)
-    await message.reply('Settings:', reply_markup = keyboard_markup)
-
-@dp.message_handler(commands=['cancel'], state='*')
-# @dp.message_handler(Text(equals='cancel', ignore_case=True), state='*')
-async def cancel_handler(message: types.Message, state: FSMContext):
+@dp.message(Command('cancel'))
+async def cancel_handler(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
         return
 
     logging.info('Cancelling state %r', current_state)
-    await state.finish()
+    await state.clear()
     #await message.reply('Cancelled:' + current_state, reply_markup=types.ReplyKeyboardRemove())
 
 ##################### list  #################################################
 
-@dp.callback_query_handler(state = ListState.select_item)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        await data['this'].handle_callback(query)
-        if data['this'].selected_index != -1:
-            keyboard_markup = types.InlineKeyboardMarkup()
-            selected = data['this'].selected_item
+@dp.message(Command('list'))
+async def cmd_list(message: Message, state: FSMContext):
+    # await cancel_handler(message, state)
+    _this = TransmissionList()
+    await state.set_state(ListState.select_item)
+    await state.set_data({'this' : _this})
+    await _this.answer_message(message)
 
-            text_and_data = [('Remove', 'remove')]
+@dp.callback_query(StateFilter(ListState.select_item))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await data['this'].handle_callback(query)
+    if data['this'].selected_index != -1:
+        builder = InlineKeyboardBuilder()
+        selected = data['this'].selected_item
 
-            if 'id' in selected:
-                if selected['status'] == 'stopped': text_and_data.append( ('Start', 'start')  )
-                if selected['status'] in ['downloading', 'seeding']: text_and_data.append( ('Pause', 'pause')  )
+        text_and_data = [('Remove', 'remove')]
+        if 'id' in selected:
+            if selected['status'] == 'stopped': text_and_data.append( ('Start', 'start')  )
+            if selected['status'] in ['downloading', 'seeding']: text_and_data.append( ('Pause', 'pause')  )
 
-            row_btns = (types.InlineKeyboardButton(text, callback_data=data) for text, data in text_and_data)
-            keyboard_markup.row(*row_btns)
+        row_btns = (InlineKeyboardButton(text=text, callback_data=data) for text, data in text_and_data)
+        builder.row(*row_btns)
 
-            await ListState.next()
-            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
+        await state.set_state(ListState.select_action)
+        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=builder.as_markup() )
 
-@dp.callback_query_handler(state=ListState.select_action)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(StateFilter(ListState.select_action))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer()  # don't forget to answer callback query as soon as possible
 
     answer_data = query.data
-    async with state.proxy() as data:
-        selected = data['this'].selected_item
-        message = ''
+    data = await state.get_data()
+    selected = data['this'].selected_item
+    message = ''
 
-        if answer_data == 'remove':
-            if selected['id']: # this is a torrent
-                transmission.remove_torrent(selected['id'], delete_data = True)
-            else: # remove just file(s)
-                path_name = os.path.join(settings['download_dir'], selected['name'] )
-                if selected['is_dir']:
-                    rmtree(path_name, ignore_errors = True)
-                else:
-                    os.remove(path_name)
-            message = 'removed'
+    if answer_data == 'remove':
+        if selected['id']: # this is a torrent
+            transmission.remove_torrent(selected['id'], delete_data = True)
+        else: # remove just file(s)
+            path_name = os.path.join(settings['download_dir'], selected['name'] )
+            if selected['is_dir']:
+                rmtree(path_name, ignore_errors = True)
+            else:
+                os.remove(path_name)
+        message = 'removed'
 
-        elif answer_data == 'pause':
-            transmission.stop_torrent(selected['id'])    
-            message = 'paused'
+    elif answer_data == 'pause':
+        transmission.stop_torrent(selected['id'])    
+        message = 'paused'
 
-        elif answer_data == 'start':
-            transmission.start_torrent(selected['id'])
-            message = 'started'    
+    elif answer_data == 'start':
+        transmission.start_torrent(selected['id'])
+        message = 'started'    
 
-        await query.bot.send_message(query.from_user.id, message, parse_mode=ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
-        await state.finish()
+    await query.bot.send_message(query.from_user.id, message, reply_markup = ReplyKeyboardRemove())
+    await state.clear()
 
 ##################### lsts  #################################################
 
-@dp.callback_query_handler(state = LstsState.select_item)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        await data['this'].handle_callback(query)
-        if data['this'].selected_index != -1:
-            keyboard_markup = types.InlineKeyboardMarkup()
-            keyboard_markup.row(*[types.InlineKeyboardButton('Remove', callback_data='remove')])
+@dp.message(Command('lsts'))
+async def cmd_ls(message: Message, state: FSMContext):
+    await cancel_handler(message, state)
+    await state.set_state(LstsState.select_item)
+    data = {
+       'this': TorrserverList()
+    }
+    await state.set_data(data)
+    await data['this'].answer_message(message)
 
-            await LstsState.next()
-            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup )
+@dp.callback_query(StateFilter(LstsState.select_item))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await data['this'].handle_callback(query)
+    if data['this'].selected_index != -1:
+        builder = InlineKeyboardBuilder()
+        builder.row(*[InlineKeyboardButton(text='Remove', callback_data='remove')])
+        await state.set_state(LstsState.select_action)
+        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=builder.as_markup() )
 
-@dp.callback_query_handler(state=LstsState.select_action)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(StateFilter(LstsState.select_action))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer()  # don't forget to answer callback query as soon as possible
-
+    data = await state.get_data()
     answer_data = query.data
-    async with state.proxy() as data:
-        selected = data['this'].selected_item
-        if answer_data == 'remove':
-            res = TorrserverList.remove_item(TorrserverList, selected)
-            await query.bot.send_message(query.from_user.id, 
-                ('removed' if res  else 'failed remove'), 
-                reply_markup = types.ReplyKeyboardRemove()
-            )
-            await state.finish()
+    selected = data['this'].selected_item
+    if answer_data == 'remove':
+        res = TorrserverList.remove_item(TorrserverList, selected)
+        await query.bot.send_message(query.from_user.id, 
+            ('removed' if res  else 'failed remove'), 
+            reply_markup = ReplyKeyboardRemove()
+        )
+        await state.clear()
 
+##################### find #################################################
 
-##################### FIND #################################################
+@dp.message(Command('find'))
+async def cmd_find(message: Message, state: FSMContext):
+    await cancel_handler(message, state)
+    await state.set_state(FindState.begin)
+    await message.reply('text to search:')
 
-@dp.message_handler(state = FindState.begin)
-async def process_find(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        user = message.from_user.id
-       
-        torrents = FindList(message.text, setup[user]['trackers'] if user in setup else set({}))
+@dp.message(StateFilter(FindState.begin))
+async def process_find(message: Message, state: FSMContext):
+    user = message.from_user.id
+    torrents = FindList(message.text, setup[user]['trackers'] if user in setup else set({}))
+    logging.info(str(user) + ', ' + message.text + ', found:' + str(len(torrents.items)) + '')
+    if len(torrents.items) == 0:
+        await message.reply('Nothing found...', parse_mode = ParseMode.HTML)
+        return
+    data = {
+       'this': torrents,
+       'message': message
+    }
+    await state.set_data(data)
+    await torrents.answer_message(message)
+    await state.set_state(FindState.select_item)
 
-        if len(torrents.items) == 0:
-            await message.reply('Nothing found...', parse_mode=ParseMode.HTML)
-            return
+@dp.callback_query(StateFilter(FindState.select_item))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
+    await query.answer()     # always answer callback queries, even if you have nothing to say
+    data = await state.get_data()
 
-        data['this'] = torrents
-        await data['this'].answer_message(message)
-        await FindState.next()
+    await data['this'].handle_callback(query)
+    if data['this'].selected_index != -1:
+        builder = InlineKeyboardBuilder()
+        row_btns = [
+            InlineKeyboardButton(text='->transmission', callback_data='download'),
+            InlineKeyboardButton(text='->torrserver', callback_data='torrserver'),
+        ]
+        builder.row(*row_btns)
+        row_btns = []
+        if data['this'].selected_item['Link']:
+            row_btns.append(InlineKeyboardButton(text='.torrent', callback_data='get_file'))
+        row_btns.append(InlineKeyboardButton(text='magnet', callback_data='get_magnet'))
+        row_btns.append(InlineKeyboardButton(text='web page', callback_data='open_page'))
+        builder.row(*row_btns)
 
+        await state.set_state(FindState.select_action)
+        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode = ParseMode.HTML, reply_markup=builder.as_markup())
 
-@dp.callback_query_handler(state = FindState.select_item)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
-    #await query.answer()     # always answer callback queries, even if you have nothing to say
-
-    async with state.proxy() as data:
-        await data['this'].handle_callback(query)
-        if data['this'].selected_index != -1:
-            keyboard_markup = types.InlineKeyboardMarkup()
-            row_btns = [
-                types.InlineKeyboardButton('->transmission', callback_data='download'),
-                types.InlineKeyboardButton('->torrserver', callback_data='torrserver'),
-            ]
-            keyboard_markup.row(*row_btns)
-            row_btns = []
-            if data['this'].selected_item['Link']:
-                row_btns.append(types.InlineKeyboardButton('.torrent', callback_data='get_file'))
-            row_btns.append(types.InlineKeyboardButton('magnet', callback_data='get_magnet'))
-            row_btns.append(types.InlineKeyboardButton('web page', callback_data='open_page'))
-            keyboard_markup.row(*row_btns)
-
-            await FindState.next()
-            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=keyboard_markup)
-
-@dp.callback_query_handler(state = FindState.select_action)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(StateFilter(FindState.select_action))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     answer_data = query.data
     await query.answer(answer_data)
-    async with state.proxy() as data:
-        selected = data['this'].selected_item
-        if answer_data == 'download':
-            if not selected['Link'] is None:
-                response = requests.get(selected['Link'])
-                transmission.add_torrent(BytesIO(response.content))
-            else:
-                transmission.add_torrent(selected['MagnetUri'])
-            await query.bot.send_message(query.from_user.id, 'Added to downloads', reply_markup = types.ReplyKeyboardRemove() )
+    data = await state.get_data()
 
-        elif answer_data == 'get_file':
+    message = None
+    selected = data['this'].selected_item
+    if answer_data == 'download':
+        if not selected['Link'] is None:
             response = requests.get(selected['Link'])
-            file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent' )
-            await query.bot.send_document(query.from_user.id, document = file, reply_markup = types.ReplyKeyboardRemove())
+            transmission.add_torrent(BytesIO(response.content))
+        else:
+            transmission.add_torrent(selected['MagnetUri'])
+        message = 'Added to downloads'
+        selected['transmission'] = True
 
-        elif answer_data == 'get_magnet':
-            await query.bot.send_message(query.from_user.id, selected['MagnetUri'], reply_markup = types.ReplyKeyboardRemove())
+    elif answer_data == 'get_file':
+        response = requests.get(selected['Link'])
+        file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent')
+        await query.bot.send_document(query.from_user.id, document = file, reply_markup = ReplyKeyboardRemove())
 
+    elif answer_data == 'get_magnet':
+        await query.bot.send_message(query.from_user.id, selected['MagnetUri'], reply_markup = ReplyKeyboardRemove())
 
-        elif answer_data == 'torrserver':
-            res = TorrserverList.add_item(TorrserverList, selected)
-            await query.bot.send_message(query.from_user.id, 
-                ('Added to Torrserver list' if res  else 'Failed to add'), 
-                reply_markup = types.ReplyKeyboardRemove()
-            )
+    elif answer_data == 'torrserver':
+        res = TorrserverList.add_item(TorrserverList, selected)
+        if res:
+            selected['torrserver'] = True
+            message = 'Added to Torrserver list'
+        else:
+            message = 'Failed to add'
+ 
+    elif answer_data == 'open_page':
+        message = selected['Details']
 
-        elif answer_data == 'open_page':
-            await query.bot.send_message(query.from_user.id, 
-                selected['Details'], reply_markup = types.ReplyKeyboardRemove())
-        await state.finish()
+    if message:
+        await query.bot.send_message(query.from_user.id, message, reply_markup = ReplyKeyboardRemove() )
+    data['this'].selected_index  = -1
+    data['this'].selected_item = None
+    await data['this'].answer_message(data['message'])
+    await state.set_state(FindState.select_item)
+    # await state.clear()
 
+##################### setup #################################################
 
-##################### SETUP #################################################
-@dp.callback_query_handler(state = Setup.begin)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
+@dp.message(Command('setup'))
+async def cmd_setup(message: Message, state: FSMContext):
+    await cancel_handler(message, state)
+    await state.set_state(Setup.begin)
+    builder = InlineKeyboardBuilder()
+    row_btns = (InlineKeyboardButton(text=text, callback_data=data) for text, data in  [('Trackers', 'trackers')] )
+    builder.row(*row_btns)
+    await message.reply('Settings:', reply_markup = builder.as_markup())
+
+@dp.callback_query(StateFilter(Setup.begin))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     global setup
     await query.answer()
     answer_data = query.data
@@ -696,24 +731,23 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
 
     if answer_data == 'trackers':
         setup[user]['trackers'] = set(setup[user]['trackers'] ^ set({answer_data}))
-        keyboard_markup = setup_tracker_buttons(setup[user]['trackers'])
-        await Setup.setup_trackers.set()
-        await query.bot.send_message(user, 'Select tracker', parse_mode=ParseMode.HTML, reply_markup = keyboard_markup )
+        keyboard = setup_tracker_buttons(setup[user]['trackers'])
+        await state.set_state(Setup.setup_trackers)
+        await query.bot.send_message(user, 'Select tracker', parse_mode=ParseMode.HTML, reply_markup = keyboard )
         #await bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
         return
  
-    await query.bot.send_message(user, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+    await query.bot.send_message(user, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = ReplyKeyboardRemove() )
     await state.finish()
 
-
-@dp.callback_query_handler(state = Setup.setup_trackers)
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(StateFilter(Setup.setup_trackers))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     global setup
     await query.answer()
     answer_data = query.data
 
     if answer_data == 'ok':
-        await query.bot.send_message(query.from_user.id, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = types.ReplyKeyboardRemove() )
+        await query.bot.send_message(query.from_user.id, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = ReplyKeyboardRemove() )
         await state.finish()
         return
 
@@ -724,15 +758,19 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery, state: F
 
     setup[user]['trackers'] = set(setup[user]['trackers'] ^ set({answer_data}))
 
-    keyboard_markup = setup_tracker_buttons(setup[user]['trackers'])
-    await query.bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
+    keyboard = setup_tracker_buttons(setup[user]['trackers'])
+    await query.bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard)
 
 ##############################################################
 
-@dp.message_handler()
-async def echo(message: types.Message):
+@dp.message()
+async def echo(message: Message):
     await message.answer('Enter one of the commands')
 
+async def main():
+    # dp.include_router(form_router)
+    # executor.start_polling(dp, skip_updates = True, on_startup = setup_bot_commands)
+    await dp.start_polling(bot)
+
 if __name__ == '__main__':
-    dp.middleware.setup(SecurityMiddleware())
-    executor.start_polling(dp, skip_updates = True, on_startup = setup_bot_commands)
+    asyncio.run(main())
