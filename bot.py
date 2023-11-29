@@ -3,28 +3,26 @@ import asyncio
 import logging
 from typing import Any, Callable, Dict, Awaitable
 
-
 # aiogram
+from aiogram.exceptions import TelegramBadRequest
 from aiogram import Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.dispatcher.middlewares.base import BaseMiddleware
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types.inline_keyboard_button import InlineKeyboardButton
-from aiogram.types.bot_command import BotCommand
 from aiogram.types import (
     TelegramObject,
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
     InputFile,
-    CallbackQuery
+    CallbackQuery,
+    BotCommand,
+    InlineKeyboardButton
 )
-
-from aiogram.exceptions import TelegramBadRequest
 # end aiogram
 
 from collections import Counter
@@ -256,14 +254,14 @@ class AbstractItemsList():
     async def answer_message(self, message: Message):
         text, keyboard_markup = self.text_and_buttons()
         try:
-            await message.answer(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
+            await message.answer(text, reply_markup = keyboard_markup)
         except TelegramBadRequest as e:
             logging.info('Message is not modified')
 
     async def edit_text(self, query: CallbackQuery):
         text, keyboard_markup = self.text_and_buttons()
         try:
-            await query.message.edit_text(text, parse_mode = ParseMode.HTML, reply_markup = keyboard_markup)
+            await query.message.edit_text(text, reply_markup = keyboard_markup)
         except TelegramBadRequest as e:
             logging.info('Message is not modified')
 
@@ -534,7 +532,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         builder.row(*row_btns)
 
         await state.set_state(ListState.select_action)
-        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=builder.as_markup() )
+        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), reply_markup=builder.as_markup() )
 
 @dp.callback_query(StateFilter(ListState.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
@@ -587,7 +585,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         builder = InlineKeyboardBuilder()
         builder.row(*[InlineKeyboardButton(text='Remove', callback_data='remove')])
         await state.set_state(LstsState.select_action)
-        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode=ParseMode.HTML, reply_markup=builder.as_markup() )
+        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), reply_markup=builder.as_markup() )
 
 @dp.callback_query(StateFilter(LstsState.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
@@ -617,7 +615,7 @@ async def process_find(message: Message, state: FSMContext):
     torrents = FindList(message.text, setup[user]['trackers'] if user in setup else set({}))
     logging.info(str(user) + ', ' + message.text + ', found:' + str(len(torrents.items)) + '')
     if len(torrents.items) == 0:
-        await message.reply('Nothing found...', parse_mode = ParseMode.HTML)
+        await message.reply('Nothing found...')
         return
     data = {
        'this': torrents,
@@ -648,7 +646,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         builder.row(*row_btns)
 
         await state.set_state(FindState.select_action)
-        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), parse_mode = ParseMode.HTML, reply_markup=builder.as_markup())
+        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), reply_markup=builder.as_markup())
 
 @dp.callback_query(StateFilter(FindState.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
@@ -720,11 +718,11 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         setup[user]['trackers'] = set(setup[user]['trackers'] ^ set({answer_data}))
         keyboard = setup_tracker_buttons(setup[user]['trackers'])
         await state.set_state(Setup.setup_trackers)
-        await query.bot.send_message(user, 'Select tracker', parse_mode=ParseMode.HTML, reply_markup = keyboard )
+        await query.bot.send_message(user, 'Select tracker', reply_markup = keyboard )
         #await bot.edit_message_reply_markup(query.message.chat.id, query.message.message_id, reply_markup = keyboard_markup)
         return
  
-    await query.bot.send_message(user, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = ReplyKeyboardRemove() )
+    await query.bot.send_message(user, 'Confirmed!', reply_markup = ReplyKeyboardRemove() )
     await state.finish()
 
 @dp.callback_query(StateFilter(Setup.setup_trackers))
@@ -734,7 +732,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     answer_data = query.data
 
     if answer_data == 'ok':
-        await query.bot.send_message(query.from_user.id, 'Confirmed!', parse_mode = ParseMode.HTML, reply_markup = ReplyKeyboardRemove() )
+        await query.bot.send_message(query.from_user.id, 'Confirmed!', reply_markup = ReplyKeyboardRemove() )
         await state.finish()
         return
 
