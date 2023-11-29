@@ -5,8 +5,7 @@ from typing import Any, Callable, Dict, Awaitable
 
 
 # aiogram
-from aiogram.types import TelegramObject
-from aiogram import Bot, Dispatcher, F, Router, html
+from aiogram import Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -15,8 +14,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types.inline_keyboard_button import InlineKeyboardButton
+from aiogram.types.bot_command import BotCommand
 from aiogram.types import (
-    KeyboardButton,
+    TelegramObject,
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -107,20 +107,7 @@ def setup_tracker_buttons(setup_map):
     builder.row(InlineKeyboardButton(text='Ok!', callback_data = 'ok'))
     return builder.as_markup()
 
-# configure logging
-logging.basicConfig(
-    format='%(asctime)s %(levelname)-8s %(message)s',
-    level = logging.INFO,
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-async def setup_bot_commands(dp):
-    await dp.bot.set_my_commands([
-        types.BotCommand('find',  'Find torrents'),
-        types.BotCommand('list',  'List torrents'),
-        types.BotCommand('lsts',  'List Torrserver'),
-        types.BotCommand('setup', 'Settings setup')
-    ])
+####################################3333
 
 class FindState(StatesGroup):
     begin = State()
@@ -505,9 +492,9 @@ class SecurityMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 ######################################################################
-bot = Bot(token = settings['telegram_api_token'])
+
 dp = Dispatcher( storage = MemoryStorage() )
-dp.update.outer_middleware( SecurityMiddleware() )
+
 ######################################################################
 
 @dp.message(Command('cancel'))
@@ -768,9 +755,20 @@ async def echo(message: Message):
     await message.answer('Enter one of the commands')
 
 async def main():
-    # dp.include_router(form_router)
-    # executor.start_polling(dp, skip_updates = True, on_startup = setup_bot_commands)
+    bot = Bot(token = settings['telegram_api_token'], parse_mode='HTML')
+    commands = [
+        BotCommand(command=cmd, description=dsc) for cmd, dsc in 
+        [
+            ('find',  'Find torrents'),
+            ('list',  'List torrents'),
+            ('lsts',  'List Torrserver'),
+            ('setup', 'Settings setup')
+        ]
+    ]
+    await bot.set_my_commands(commands)
+    dp.update.outer_middleware( SecurityMiddleware() )
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
+    logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s', level = logging.INFO, datefmt='%Y-%m-%d %H:%M:%S')
     asyncio.run(main())
