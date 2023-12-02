@@ -18,7 +18,7 @@ from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
-    InputFile,
+    BufferedInputFile,
     CallbackQuery,
     BotCommand,
     InlineKeyboardButton
@@ -667,7 +667,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 
     elif answer_data == 'get_file':
         response = requests.get(selected['Link'])
-        file = InputFile(BytesIO(response.content), filename= selected['Title'] + '.torrent')
+        file = BufferedInputFile(response.content, filename= selected['Title'] + '.torrent')
         await query.bot.send_document(query.from_user.id, document = file, reply_markup = ReplyKeyboardRemove())
 
     elif answer_data == 'get_magnet':
