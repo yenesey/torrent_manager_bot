@@ -465,7 +465,7 @@ class TorrserverList(AbstractItemsList):
         return '<b>' + str(i) + '</b>. ' + item['name'] + ' [' + sizeof_fmt(item['size']) + ']'
 
     def add_item(self, item):
-        json={ 'action' : 'add',  'link' : item['MagnetUri'], 'title' : item['Title'], 'poster': item['Poster'] }
+        json={ 'action' : 'add',  'link' : item['Link'] or item['MagnetUri'], 'title' : item['Title'], 'poster': item['Poster'] }
         res = requests.post(self.url, json = json)
         return res.status_code == 200
 
@@ -659,9 +659,11 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     if answer_data == 'download':
         if not selected['Link'] is None:
             response = requests.get(selected['Link'])
-            transmission.add_torrent(BytesIO(response.content))
-        else:
+            if response.status_code == 200:
+                transmission.add_torrent(BytesIO(response.content))
+        elif not torrent['MagnetUri'] is None:
             transmission.add_torrent(selected['MagnetUri'])
+
         message = 'Added to downloads'
         selected['transmission'] = True
 
