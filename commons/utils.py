@@ -17,7 +17,7 @@ def get_file_ext(file_name : str) -> str:
 
 def scantree(path, recursive = False):
     for entry in os.scandir(path):
-        if recursive and entry.is_dir(follow_symlinks=False):
+        if recursive and entry.is_dir(follow_symlinks = False):
             yield from scantree(entry.path, recursive)
         else:
             yield entry

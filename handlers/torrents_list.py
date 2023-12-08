@@ -1,27 +1,16 @@
-from aiogram import Dispatcher
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import Command, CommandStart, StateFilter
-from aiogram.fsm.context import FSMContext
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import (
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
-    InlineKeyboardButton,
-    CallbackQuery,
-    BufferedInputFile,
-    Message
-)
-
 from transmission_rpc import Client as TransmissionClient
-from datetime import datetime
 import psutil
 import os
 from collections import Counter
+from shutil import rmtree
 
-from bot_list_ui import AbstractItemsList
-from utils import timestamp, sizeof_fmt, get_file_ext, scantree
+from commons.bot_list_ui import AbstractItemsList
+from commons.utils import datetime, timestamp, sizeof_fmt, get_file_ext, scantree
+from commons.aio_for_handlers import *
+from commons.settings import settings
 
-settings = None
+router = Router()
+transmission = TransmissionClient(**settings['transmission'])
 
 class ListState(StatesGroup):
     select_item = State()
@@ -131,67 +120,60 @@ class TransmissionList(AbstractItemsList):
         return '<b>' + result + '</b>'
 
 
-def init(main_settings, dp: Dispatcher):
-    global settings
-    settings = main_settings
-    transmission = TransmissionClient(**settings['transmission'])
-    settings['transmission'] = transmission
-    globals()['transmission'] = transmission
+@router.message(Command('list'))
+async def cmd_list(message: Message, state: FSMContext):
+    # await cancel_handler(message, state)
+    _this = TransmissionList()
+    await state.set_state(ListState.select_item)
+    await state.set_data({'this' : _this})
+    await _this.answer_message(message)
 
-    @dp.message(Command('list'))
-    async def cmd_list(message: Message, state: FSMContext):
-        # await cancel_handler(message, state)
-        _this = TransmissionList()
-        await state.set_state(ListState.select_item)
-        await state.set_data({'this' : _this})
-        await _this.answer_message(message)
-
-    @dp.callback_query(StateFilter(ListState.select_item))
-    async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
-        data = await state.get_data()
-        await data['this'].handle_callback(query)
-        if data['this'].selected_index != -1:
-            builder = InlineKeyboardBuilder()
-            selected = data['this'].selected_item
-
-            text_and_data = [('Remove', 'remove')]
-            if 'id' in selected:
-                if selected['status'] == 'stopped': text_and_data.append( ('Start', 'start')  )
-                if selected['status'] in ['downloading', 'seeding']: text_and_data.append( ('Pause', 'pause')  )
-
-            row_btns = (InlineKeyboardButton(text=text, callback_data=data) for text, data in text_and_data)
-            builder.row(*row_btns)
-
-            await state.set_state(ListState.select_action)
-            await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), reply_markup=builder.as_markup() )
-
-    @dp.callback_query(StateFilter(ListState.select_action))
-    async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
-        await query.answer()  # don't forget to answer callback query as soon as possible
-
-        answer_data = query.data
-        data = await state.get_data()
+@router.callback_query(StateFilter(ListState.select_item))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await data['this'].handle_callback(query)
+    if data['this'].selected_index != -1:
+        builder = InlineKeyboardBuilder()
         selected = data['this'].selected_item
-        message = ''
 
-        if answer_data == 'remove':
-            if selected['id']: # this is a torrent
-                transmission.remove_torrent(selected['id'], delete_data = True)
-            else: # remove just file(s)
-                path_name = os.path.join(settings['download_dir'], selected['name'] )
-                if selected['is_dir']:
-                    rmtree(path_name, ignore_errors = True)
-                else:
-                    os.remove(path_name)
-            message = 'removed'
+        text_and_data = [('Remove', 'remove')]
+        if 'id' in selected:
+            if selected['status'] == 'stopped': text_and_data.append( ('Start', 'start')  )
+            if selected['status'] in ['downloading', 'seeding']: text_and_data.append( ('Pause', 'pause')  )
 
-        elif answer_data == 'pause':
-            transmission.stop_torrent(selected['id'])    
-            message = 'paused'
+        row_btns = (InlineKeyboardButton(text=text, callback_data=data) for text, data in text_and_data)
+        builder.row(*row_btns)
 
-        elif answer_data == 'start':
-            transmission.start_torrent(selected['id'])
-            message = 'started'    
+        await state.set_state(ListState.select_action)
+        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), reply_markup=builder.as_markup() )
 
-        await query.bot.send_message(query.from_user.id, message, reply_markup = ReplyKeyboardRemove())
-        await state.clear()
+@router.callback_query(StateFilter(ListState.select_action))
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
+    await query.answer()  # don't forget to answer callback query as soon as possible
+
+    answer_data = query.data
+    data = await state.get_data()
+    selected = data['this'].selected_item
+    message = ''
+
+    if answer_data == 'remove':
+        if selected['id']: # this is a torrent
+            transmission.remove_torrent(selected['id'], delete_data = True)
+        else: # remove just file(s)
+            path_name = os.path.join(settings['download_dir'], selected['name'] )
+            if selected['is_dir']:
+                rmtree(path_name, ignore_errors = True)
+            else:
+                os.remove(path_name)
+        message = 'removed'
+
+    elif answer_data == 'pause':
+        transmission.stop_torrent(selected['id'])    
+        message = 'paused'
+
+    elif answer_data == 'start':
+        transmission.start_torrent(selected['id'])
+        message = 'started'    
+
+    await query.bot.send_message(query.from_user.id, message, reply_markup = ReplyKeyboardRemove())
+    await state.clear()
