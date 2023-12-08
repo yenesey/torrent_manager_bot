@@ -14,7 +14,7 @@ from handlers import (
     torrserver,
     setup_settings,
 )
-from commons.settings import settings
+from commons.globals import settings
 settings['setup'] = {}
 
 ######################################################################
@@ -28,7 +28,7 @@ class SecurityMiddleware(BaseMiddleware):
         user = data['event_from_user']
         if (user.id not in settings['users_list']):
             logging.info('Unknown user: ' + str(user.id))
-            return   
+            return
         return await handler(event, data)
 
 ######################################################################
@@ -40,10 +40,10 @@ class SecurityMiddleware(BaseMiddleware):
 
 async def main():
     logging.basicConfig(
-        format='%(asctime)s %(levelname)-8s %(message)s',
+        format = '%(asctime)s %(levelname)-8s %(message)s',
         level = logging.INFO, datefmt='%Y-%m-%d %H:%M:%S'
     )
-    
+
     bot = Bot(token = settings['telegram_api_token'], parse_mode = 'HTML')
     commands = [
         BotCommand(command=cmd, description=dsc) for cmd, dsc in 
@@ -55,14 +55,14 @@ async def main():
         ]
     ]
     await bot.set_my_commands(commands)
-    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.delete_webhook(drop_pending_updates = True)
 
     dp = Dispatcher( storage = MemoryStorage() )
     dp.update.outer_middleware( SecurityMiddleware() )
     dp.include_routers(
         torrents_list.router,
-        torrents_find.router, 
-        torrserver.router, 
+        torrents_find.router,
+        torrserver.router,
         setup_settings.router
     )
     await dp.start_polling(bot)

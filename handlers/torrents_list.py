@@ -1,4 +1,3 @@
-from transmission_rpc import Client as TransmissionClient
 import psutil
 import os
 from collections import Counter
@@ -7,10 +6,9 @@ from shutil import rmtree
 from commons.bot_list_ui import AbstractItemsList
 from commons.utils import datetime, timestamp, sizeof_fmt, get_file_ext, scantree
 from commons.aio_for_handlers import *
-from commons.settings import settings
+from commons.globals import settings, transmission
 
 router = Router()
-transmission = TransmissionClient(**settings['transmission'])
 
 class ListState(StatesGroup):
     select_item = State()

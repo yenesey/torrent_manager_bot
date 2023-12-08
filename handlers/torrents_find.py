@@ -5,14 +5,11 @@ from io import BytesIO
 from commons.bot_list_ui import AbstractItemsList
 from commons.utils import timestamp, sizeof_fmt
 from commons.aio_for_handlers import *
-from commons.settings import settings, get_url
+from commons.globals import settings, transmission, torrserver, jackett
 
 router = Router()
 
-def get_base_jackett_url():
-    return 'http://' + get_url('jackett') + '/api/v2.0/'
-
-class FindState(StatesGroup):
+class ThisState(StatesGroup):
     begin = State()
     select_item = State()
     select_action = State()
@@ -29,17 +26,7 @@ class FindList(AbstractItemsList):
         self.reload()
 
     def reload(self):
-        params = {
-            'apikey': settings['jackett']['api_key'], 
-            'Query' : self.query_string, 
-            'Tracker[]' : list(self.trackers), 
-            '_' : timestamp()
-        }
-                                                      #indexers/<filter>/results  ||| 'indexers/all/results'
-        response = requests.get(get_base_jackett_url() + 'indexers/status:healthy,test:passed/results', params)
-        if response.status_code != 200: return
-
-        results = response.json()['Results']
+        results = jackett.query(self.query_string, self.trackers)
         self.items_list = [el for el in results if el['Seeders'] > 0 or el['Peers'] > 0]
         for item in self.items_list:
             item['transmission'] = False
@@ -59,10 +46,10 @@ class FindList(AbstractItemsList):
 @router.message(Command('find'))
 async def cmd_find(message: Message, state: FSMContext):
     await state.clear()
-    await state.set_state(FindState.begin)
+    await state.set_state(ThisState.begin)
     await message.reply('text to search:')
 
-@router.message(StateFilter(FindState.begin))
+@router.message(StateFilter(ThisState.begin))
 async def process_find(message: Message, state: FSMContext):
     user = message.from_user.id
     trackers_setup = settings['setup'][user]['trackers'] if user in settings['setup'] else set({})
@@ -77,9 +64,9 @@ async def process_find(message: Message, state: FSMContext):
     }
     await state.set_data(data)
     await torrents.answer_message(message)
-    await state.set_state(FindState.select_item)
+    await state.set_state(ThisState.select_item)
 
-@router.callback_query(StateFilter(FindState.select_item))
+@router.callback_query(StateFilter(ThisState.select_item))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer()     # always answer callback queries, even if you have nothing to say
     data = await state.get_data()
@@ -99,10 +86,10 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         row_btns.append(InlineKeyboardButton(text='web page', callback_data='open_page'))
         builder.row(*row_btns)
 
-        await state.set_state(FindState.select_action)
+        await state.set_state(ThisState.select_action)
         await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), reply_markup=builder.as_markup())
 
-@router.callback_query(StateFilter(FindState.select_action))
+@router.callback_query(StateFilter(ThisState.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     answer_data = query.data
     await query.answer(answer_data)
@@ -111,7 +98,6 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     message = None
     selected = data['this'].selected_item
     if answer_data == 'download':
-        transmission = settings['transmission']
         if not selected['Link'] is None:
             response = requests.get(selected['Link'])
             if response.status_code == 200:
@@ -131,7 +117,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         await query.bot.send_message(query.from_user.id, selected['MagnetUri'], reply_markup = ReplyKeyboardRemove())
 
     elif answer_data == 'torrserver':
-        res = TorrserverList.add_item(TorrserverList, selected)
+        res = torrserver.add_item(selected)
         if res:
             selected['torrserver'] = True
             message = 'Added to Torrserver list'
@@ -146,5 +132,5 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     data['this'].selected_index  = -1
     data['this'].selected_item = None
     await data['this'].answer_message(data['message'])
-    await state.set_state(FindState.select_item)
+    await state.set_state(ThisState.select_item)
     # await state.clear()

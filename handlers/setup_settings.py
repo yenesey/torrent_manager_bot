@@ -2,7 +2,7 @@ import requests
 
 from commons.utils import datetime, timestamp
 from commons.aio_for_handlers import *
-from commons.settings import settings, get_url
+from commons.globals import settings, jackett
 
 router = Router()
 
@@ -11,20 +11,12 @@ class Setup(StatesGroup):
     setup_trackers = State()
 
 def setup_tracker_buttons(setup_map):
-    indexers = get_configured_jackett_indexers()
+    indexers = jackett.get_valid_indexers()
     builder = InlineKeyboardBuilder()
-    text_and_data = [ ( ('✓' if ind['id'] in setup_map else '') + ind['name'], ind['id']) for ind in indexers ]
-    row_btns = (InlineKeyboardButton(text=text, callback_data=data) for text, data in text_and_data)
-    builder.row(*row_btns)
+    for text, data in [ ( ('✅' if ind['id'] in setup_map else '🟩') + ind['name'], ind['id']) for ind in indexers ]:
+        builder.row(InlineKeyboardButton(text = text, callback_data = data))
     builder.row(InlineKeyboardButton(text='Ok!', callback_data = 'ok'))
     return builder.as_markup()
-
-def get_configured_jackett_indexers():
-    response = requests.get(get_base_jackett_url() + 'indexers?_=' + timestamp())
-    return [indexer for indexer in response.json() if indexer['configured'] and indexer['last_error'] == '']
-
-def get_base_jackett_url():
-    return 'http://' + get_url('jackett') + '/api/v2.0/'
 
 @router.message(Command('setup'))
 async def cmd_setup(message: Message, state: FSMContext):

@@ -21,7 +21,7 @@ class AbstractItemsList():
         self.filter = set()   # set() -- toggle filters by classification (classify_items)
 
         self.page_num = 0
-        self.items_on_page = 5
+        self.items_on_page = 4
         self.selected_index = -1
         self.selected_item = None
         self.from_index = -1
