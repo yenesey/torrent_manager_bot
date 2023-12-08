@@ -1,4 +1,5 @@
 import json
+
 settings = json.load( open('settings.json') )
 
 def get_url(service_name):
