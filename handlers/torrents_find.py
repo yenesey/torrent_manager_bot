@@ -9,11 +9,6 @@ from commons.globals import settings, transmission, torrserver, jackett
 
 router = Router()
 
-class ThisState(StatesGroup):
-    # begin = State()
-    select_item = State()
-    select_action = State()
-
 class FindList(AbstractItemsList):
     
     def __init__(self, query_string = str, trackers = set) -> None:
@@ -43,99 +38,91 @@ class FindList(AbstractItemsList):
            # ('' if item['MagnetUri'] is None else 'U') + ']'              
 
 
-@router.message(Command('find'))
-async def cmd_find(message: Message, state: FSMContext):
-    await state.clear()
-    # await state.set_state(ThisState.begin)
-    await message.reply('search:')
+class FindStates(StatesGroup):
+    select_item = State()
+    select_action = State()
 
+# @router.message(Command('find'))
+# async def cmd_find(message: Message, state: FSMContext):
+    # await state.clear()
+    # await message.reply('search:')
 
-@router.message(StateFilter(None))
+@router.message() #StateFilter(None)
 async def process_find(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
 
     user = message.from_user.id
     trackers_setup = settings['setup'][user]['trackers'] if user in settings['setup'] else set({})
-    torrents = FindList(message.text, list(trackers_setup))
-    logging.info(str(user) + ', ' + message.text + ', found:' + str(len(torrents.items)) + '')
-    if len(torrents.items) == 0:
+    find_list = FindList(message.text, list(trackers_setup))
+    logging.info(str(user) + ', ' + message.text + ', found:' + str(len(find_list.items)) + '')
+    if len(find_list.items) == 0:
         await message.reply('Nothing found...')
         await state.clear()
         return
-    data = {
-       'this': torrents,
-       'message': message
-    }
-    await state.set_data(data)
-    await torrents.answer_message(message)
-    await state.set_state(ThisState.select_item)
 
-@router.callback_query(StateFilter(ThisState.select_item))
+    await state.set_data({'find_list': find_list})
+    await find_list.answer_message(message)
+    await state.set_state(FindStates.select_item)
+
+@router.callback_query(StateFilter(FindStates.select_item))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer()     # always answer callback queries, even if you have nothing to say
-    data = await state.get_data()
-
-    await data['this'].handle_callback(query)
-    if data['this'].selected_index != -1:
+    state_data = await state.get_data()
+    find_list = state_data['find_list']
+    await find_list.handle_callback(query)
+    if find_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
         row_btns = [
-            InlineKeyboardButton(text='->transmission', callback_data='download'),
-            InlineKeyboardButton(text='->torrserver', callback_data='torrserver'),
+            InlineKeyboardButton(text='download', callback_data='download'),
+            InlineKeyboardButton(text='torrsrv', callback_data='torrserver'),
+            InlineKeyboardButton(text='⬆', callback_data='return')
         ]
         builder.row(*row_btns)
         row_btns = []
-        if data['this'].selected_item['Link']:
+        if find_list.selected_item['Link']:
             row_btns.append(InlineKeyboardButton(text='.torrent', callback_data='get_file'))
-        row_btns.append(InlineKeyboardButton(text='magnet', callback_data='get_magnet'))
-        row_btns.append(InlineKeyboardButton(text='web page', callback_data='open_page'))
+        if find_list.selected_item['MagnetUri']:
+            row_btns.append(InlineKeyboardButton(text='magnet', callback_data='get_magnet'))
+        if find_list.selected_item['Details']:
+            row_btns.append(InlineKeyboardButton(text='web page', callback_data='open_page'))
         builder.row(*row_btns)
 
-        await state.set_state(ThisState.select_action)
-        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), reply_markup=builder.as_markup())
+        await state.set_state(FindStates.select_action)
+        await query.bot.send_message(query.from_user.id, find_list.get_selected_str(), reply_markup=builder.as_markup())
 
-@router.callback_query(StateFilter(ThisState.select_action))
+@router.callback_query(StateFilter(FindStates.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
-    answer_data = query.data
-    await query.answer(answer_data)
-    data = await state.get_data()
+    await query.answer(query.data)
+    state_data = await state.get_data()
+    find_list = state_data['find_list']
+    selected = find_list.selected_item
 
-    message = None
-    selected = data['this'].selected_item
-    if answer_data == 'download':
+    if query.data == 'download':
         if not selected['Link'] is None:
             response = requests.get(selected['Link'])
             if response.status_code == 200:
                 transmission.add_torrent(BytesIO(response.content))
         elif not torrent['MagnetUri'] is None:
             transmission.add_torrent(selected['MagnetUri'])
-
-        message = 'Added to downloads'
         selected['transmission'] = True
 
-    elif answer_data == 'get_file':
-        response = requests.get(selected['Link'])
-        file = BufferedInputFile(response.content, filename= selected['Title'] + '.torrent')
-        await query.bot.send_document(query.from_user.id, document = file, reply_markup = ReplyKeyboardRemove())
-
-    elif answer_data == 'get_magnet':
-        await query.bot.send_message(query.from_user.id, selected['MagnetUri'], reply_markup = ReplyKeyboardRemove())
-
-    elif answer_data == 'torrserver':
+    elif query.data == 'torrserver':
         res = torrserver.add_item(selected)
         if res:
             selected['torrserver'] = True
-            message = 'Added to Torrserver list'
-        else:
-            message = 'Failed to add'
+ 
+    elif query.data == 'get_file':
+        response = requests.get(selected['Link'])
+        file = BufferedInputFile(response.content, filename= selected['Title'] + '.torrent')
+        await query.bot.send_document(query.from_user.id, document = file)
 
-    elif answer_data == 'open_page':
-        message = selected['Details']
+    elif query.data == 'get_magnet':
+        await query.bot.send_message(query.from_user.id, selected['MagnetUri'])
 
-    if message:
-        await query.bot.send_message(query.from_user.id, message, reply_markup = ReplyKeyboardRemove() )
-    data['this'].selected_index  = -1
-    data['this'].selected_item = None
-    await data['this'].answer_message(data['message'])
-    await state.set_state(ThisState.select_item)
-    # await state.clear()
+    elif query.data == 'open_page':
+        await query.bot.send_message(query.from_user.id, selected['Details'])
+ 
+    find_list.selected_index = -1
+    await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
+    await state.set_state(FindStates.select_item)

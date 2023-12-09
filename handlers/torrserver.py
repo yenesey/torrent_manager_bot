@@ -8,10 +8,6 @@ from commons.globals import torrserver
 
 router = Router()
 
-class LstsState(StatesGroup):
-    select_item = State()
-    select_action = State()
-
 class TorrserverList(AbstractItemsList):
 
     def __init__(self) -> None:
@@ -25,37 +21,40 @@ class TorrserverList(AbstractItemsList):
         item = self.items[i]
         return '<b>' + str(i) + '</b>. ' + item['name'] + ' [' + sizeof_fmt(item['size']) + ']'
 
+class TorrserverStates(StatesGroup):
+    show_list = State()
+    select_action = State()
 
-@router.message(Command('lsts'))
+@router.message(Command('list_ts'))
 async def cmd_ls(message: Message, state: FSMContext):
     await state.clear()
-    await state.set_state(LstsState.select_item)
-    data = {
-       'this': TorrserverList()
-    }
-    await state.set_data(data)
-    await data['this'].answer_message(message)
+    await state.set_state(TorrserverStates.show_list)
+    torrserver_list = TorrserverList()
+    await state.set_data({'torrserver_list': torrserver_list})
+    await torrserver_list.answer_message(message)
 
-@router.callback_query(StateFilter(LstsState.select_item))
+@router.callback_query(StateFilter(TorrserverStates.show_list))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    await data['this'].handle_callback(query)
-    if data['this'].selected_index != -1:
+    state_data = await state.get_data()
+    torrserver_list = state_data['torrserver_list']
+    await torrserver_list.handle_callback(query)
+    if torrserver_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
-        builder.row(*[InlineKeyboardButton(text='Remove', callback_data='remove')])
-        await state.set_state(LstsState.select_action)
-        await query.bot.send_message(query.from_user.id, data['this'].get_selected_str(), reply_markup=builder.as_markup() )
+        text_and_data = [('Remove', 'remove'), ('⬆', 'return')]
+        row_btns = (InlineKeyboardButton(text = text, callback_data = data) for text, data in text_and_data)
+        builder.row(*row_btns)
+        await state.set_state(TorrserverStates.select_action)
+        await query.bot.send_message(query.from_user.id, torrserver_list.get_selected_str(), reply_markup=builder.as_markup() )
 
-@router.callback_query(StateFilter(LstsState.select_action))
+@router.callback_query(StateFilter(TorrserverStates.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer()  # don't forget to answer callback query as soon as possible
-    data = await state.get_data()
-    answer_data = query.data
-    selected = data['this'].selected_item
-    if answer_data == 'remove':
-        res = torrserver.remove_item(selected)
-        await query.bot.send_message(query.from_user.id, 
-            ('removed' if res  else 'failed remove'), 
-            reply_markup = ReplyKeyboardRemove()
-        )
-        await state.clear()
+    state_data = await state.get_data()
+    torrserver_list = state_data['torrserver_list']
+
+    if query.data == 'remove':
+        res = torrserver.remove_item(torrserver_list.selected_item)
+
+    torrserver_list.selected_item = -1
+    await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
+    await state.set_state(TorrserverStates.show_list)
