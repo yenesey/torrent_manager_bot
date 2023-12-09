@@ -61,9 +61,9 @@ async def main():
     dp.update.outer_middleware( SecurityMiddleware() )
     dp.include_routers(
         torrents_list.router,
-        torrents_find.router,
         torrserver.router,
-        setup_settings.router
+        setup_settings.router,
+        torrents_find.router,
     )
     await dp.start_polling(bot)
 

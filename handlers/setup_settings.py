@@ -1,7 +1,7 @@
 import requests
 
+from commons.aio_modules import *
 from commons.utils import datetime, timestamp
-from commons.aio_for_handlers import *
 from commons.globals import settings, jackett
 
 router = Router()

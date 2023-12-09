@@ -2,15 +2,15 @@ import logging
 import requests
 from io import BytesIO
 
+from commons.aio_modules import *
 from commons.bot_list_ui import AbstractItemsList
 from commons.utils import timestamp, sizeof_fmt
-from commons.aio_for_handlers import *
 from commons.globals import settings, transmission, torrserver, jackett
 
 router = Router()
 
 class ThisState(StatesGroup):
-    begin = State()
+    # begin = State()
     select_item = State()
     select_action = State()
 
@@ -46,17 +46,22 @@ class FindList(AbstractItemsList):
 @router.message(Command('find'))
 async def cmd_find(message: Message, state: FSMContext):
     await state.clear()
-    await state.set_state(ThisState.begin)
-    await message.reply('text to search:')
+    # await state.set_state(ThisState.begin)
+    await message.reply('search:')
 
-@router.message(StateFilter(ThisState.begin))
+
+@router.message(StateFilter(None))
 async def process_find(message: Message, state: FSMContext):
+    if message.text.startswith('/'):
+        return
+
     user = message.from_user.id
     trackers_setup = settings['setup'][user]['trackers'] if user in settings['setup'] else set({})
-    torrents = FindList(message.text, trackers_setup)
+    torrents = FindList(message.text, list(trackers_setup))
     logging.info(str(user) + ', ' + message.text + ', found:' + str(len(torrents.items)) + '')
     if len(torrents.items) == 0:
         await message.reply('Nothing found...')
+        await state.clear()
         return
     data = {
        'this': torrents,

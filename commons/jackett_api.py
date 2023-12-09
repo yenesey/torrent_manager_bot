@@ -1,5 +1,6 @@
 import requests
-from commons.utils import timestamp, sizeof_fmt
+from commons.utils import timestamp
+import logging
 
 class Jackett():
 
@@ -16,9 +17,10 @@ class Jackett():
         params = {
             'apikey': self.api_key,
             'Query' : query_string, 
-            'Tracker[]' : trackers, 
             '_' : timestamp()
         }
+        if len(trackers) > 0:
+            params['Tracker[]'] = trackers
                                             #indexers/<filter>/results  ||| 'indexers/all/results'
         response = requests.get(self.url + 'indexers/status:healthy,test:passed/results', params)
         if response.status_code != 200: return []

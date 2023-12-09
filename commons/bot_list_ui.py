@@ -157,7 +157,10 @@ class AbstractItemsList():
 
         elif query.data[:10] == '#order_by#':
             key = query.data[10:]
-            index = (i for i, e in enumerate(self.sort_order) if e[0] == key)
+            index = -1
+            for i,e in enumerate(self.sort_order):
+                if e[0] == key:
+                    index = i
             if index == -1: # not present yet
                 self.sort_order.append((key, 0))
             else:

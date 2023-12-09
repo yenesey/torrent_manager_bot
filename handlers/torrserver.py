@@ -1,9 +1,9 @@
 import logging
 import requests
 
+from commons.aio_modules import *
 from commons.bot_list_ui import AbstractItemsList
 from commons.utils import datetime, timestamp, sizeof_fmt, get_file_ext, scantree
-from commons.aio_for_handlers import *
 from commons.globals import torrserver
 
 router = Router()
