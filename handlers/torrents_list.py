@@ -113,18 +113,19 @@ class TransmissionList(AbstractItemsList):
             result += ('\n' if key == 'total' else '') + key + ': ' + sizeof_fmt( stats[key] ) + ' '
         return '<b>' + result + '</b>'
 
-class TorrentsStates(StatesGroup):
+
+class ListStates(StatesGroup):
     show_list = State()
     select_action = State()
 
 @router.message(Command('list'))
 async def cmd_list(message: Message, state: FSMContext):
     torrents_list = TransmissionList()
-    await state.set_state(TorrentsStates.show_list)
+    await state.set_state(ListStates.show_list)
     await state.set_data({'torrents_list': torrents_list})
     await torrents_list.answer_message(message)
 
-@router.callback_query(StateFilter(TorrentsStates.show_list))
+@router.callback_query(StateFilter(ListStates.show_list))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     state_data = await state.get_data()
     torrents_list = state_data['torrents_list']
@@ -141,10 +142,10 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         row_btns = (InlineKeyboardButton(text = text, callback_data = data) for text, data in text_and_data)
         builder.row(*row_btns)
 
-        await state.set_state(TorrentsStates.select_action)
+        await state.set_state(ListStates.select_action)
         await query.bot.send_message(query.from_user.id, torrents_list.get_selected_str(), reply_markup = builder.as_markup() )
 
-@router.callback_query(StateFilter(TorrentsStates.select_action))
+@router.callback_query(StateFilter(ListStates.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     state_data = await state.get_data()
     torrents_list = state_data['torrents_list']
@@ -174,5 +175,5 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         
     torrents_list.selected_index = -1
     await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
-    await state.set_state(TorrentsStates.show_list)
+    await state.set_state(ListStates.show_list)
 

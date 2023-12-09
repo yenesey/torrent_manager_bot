@@ -35,17 +35,11 @@ class FindList(AbstractItemsList):
             ' [' +str(item['Seeders']) + 's/' + str(item['Peers']) + 'p]' +\
             (' [+transmission]' if item['transmission'] else '') +\
             (' [+torrserver]' if item['torrserver'] else '')
-           # ('' if item['MagnetUri'] is None else 'U') + ']'              
-
+           
 
 class FindStates(StatesGroup):
     select_item = State()
     select_action = State()
-
-# @router.message(Command('find'))
-# async def cmd_find(message: Message, state: FSMContext):
-    # await state.clear()
-    # await message.reply('search:')
 
 @router.message() #StateFilter(None)
 async def process_find(message: Message, state: FSMContext):
