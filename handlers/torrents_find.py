@@ -98,7 +98,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
             response = requests.get(selected['Link'])
             if response.status_code == 200:
                 transmission.add_torrent(BytesIO(response.content))
-        elif not torrent['MagnetUri'] is None:
+        elif not selected['MagnetUri'] is None:
             transmission.add_torrent(selected['MagnetUri'])
         selected['transmission'] = True
 
