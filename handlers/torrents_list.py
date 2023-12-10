@@ -18,6 +18,7 @@ class TransmissionList(AbstractItemsList):
         self.sort_order = [('date', 0)]
         self.filter_key = 'status'
         self.stats = None
+        self.reload_button = True
         self.reload()
     
     @staticmethod
@@ -129,6 +130,7 @@ async def cmd_list(message: Message, state: FSMContext):
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     state_data = await state.get_data()
     torrents_list = state_data['torrents_list']
+    torrents_list.bind_to_query(query)
     await torrents_list.handle_callback(query)
     if torrents_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
@@ -174,6 +176,8 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         await query.answer('return')
         
     torrents_list.selected_index = -1
+    torrents_list.reload()
+    await torrents_list.refresh()
     await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
     await state.set_state(ListStates.show_list)
 

@@ -37,6 +37,7 @@ async def cmd_ls(message: Message, state: FSMContext):
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     state_data = await state.get_data()
     torrserver_list = state_data['torrserver_list']
+    torrserver_list.bind_to_query(query)
     await torrserver_list.handle_callback(query)
     if torrserver_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
@@ -56,5 +57,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         res = torrserver.remove_item(torrserver_list.selected_item)
 
     torrserver_list.selected_item = -1
+    torrserver_list.reload()
+    await torrserver_list.refresh()
     await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
     await state.set_state(TorrserverStates.show_list)

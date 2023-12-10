@@ -26,6 +26,11 @@ class AbstractItemsList():
         self.selected_item = None
         self.from_index = -1
         self.to_index = -1
+        self.reload_button = False
+        self.query = None # CallbackQuery
+
+    def bind_to_query(self, query: CallbackQuery):
+        self.query = query
 
     def reload(self):
         pass
@@ -131,7 +136,8 @@ class AbstractItemsList():
         builder.row( # control buttons
             btn['prev_page'] if self.page_num > 0 else btn['dummy'],
             # reload active only when implemented in subclass
-            btn['reload'] if getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload') else btn['dummy'],
+            btn['reload'] if self.reload_button 
+                and (getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload')) else btn['dummy'],
             btn['next_page'] if self.page_num + 1 < (len(self.items) / self.items_on_page) else btn['dummy']
         )
         return text, builder.as_markup()
@@ -142,6 +148,10 @@ class AbstractItemsList():
             await message.answer(text, reply_markup = keyboard_markup)
         except TelegramBadRequest as e:
             logging.info('Message is not modified')
+
+    async def refresh(self):
+        if self.query:
+            await self.edit_text(self.query)
 
     async def edit_text(self, query: CallbackQuery):
         text, keyboard_markup = self.text_and_buttons()

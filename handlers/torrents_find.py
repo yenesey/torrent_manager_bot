@@ -33,12 +33,12 @@ class FindList(AbstractItemsList):
         return '<b>' + str(i) + '.</b> ' + item['Title'] + \
             ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' + \
             ' [' +str(item['Seeders']) + 's/' + str(item['Peers']) + 'p]' +\
-            (' [+transmission]' if item['transmission'] else '') +\
-            (' [+torrserver]' if item['torrserver'] else '')
-           
+            (' [downloading]' if item['transmission'] else '') +\
+            (' [in torrserver]' if item['torrserver'] else '')
+
 
 class FindStates(StatesGroup):
-    select_item = State()
+    show_list = State()
     select_action = State()
 
 @router.message() #StateFilter(None)
@@ -57,13 +57,14 @@ async def process_find(message: Message, state: FSMContext):
 
     await state.set_data({'find_list': find_list})
     await find_list.answer_message(message)
-    await state.set_state(FindStates.select_item)
+    await state.set_state(FindStates.show_list)
 
-@router.callback_query(StateFilter(FindStates.select_item))
+@router.callback_query(StateFilter(FindStates.show_list))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer()     # always answer callback queries, even if you have nothing to say
     state_data = await state.get_data()
     find_list = state_data['find_list']
+    find_list.bind_to_query(query)
     await find_list.handle_callback(query)
     if find_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
@@ -118,5 +119,6 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         await query.bot.send_message(query.from_user.id, selected['Details'])
  
     find_list.selected_index = -1
+    await find_list.refresh()
     await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
-    await state.set_state(FindStates.select_item)
+    await state.set_state(FindStates.show_list)
