@@ -11,7 +11,7 @@ router = Router()
 
 class FindList(AbstractItemsList):
     
-    def __init__(self, query_string = str, trackers = set) -> None:
+    def __init__(self, query_string : str, trackers : set) -> None:
         super().__init__()
         self.sort_keys = [('Size', 'size'), ('Seeders', 'seeds'), ('Peers', 'peers'), ('Link', 'lnk')]
         self.sort_order = [('Size', 0), ('Seeders', 0), ('Peers', 0)]
