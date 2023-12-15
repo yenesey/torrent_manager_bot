@@ -37,7 +37,7 @@ async def cmd_ls(message: Message, state: FSMContext):
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     state_data = await state.get_data()
     torrserver_list = state_data['torrserver_list']
-    torrserver_list.bind_to_query(query)
+
     await torrserver_list.handle_callback(query)
     if torrserver_list.selected_index != -1:
         builder = InlineKeyboardBuilder()

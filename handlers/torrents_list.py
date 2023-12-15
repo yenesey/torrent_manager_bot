@@ -130,7 +130,7 @@ async def cmd_list(message: Message, state: FSMContext):
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     state_data = await state.get_data()
     torrents_list = state_data['torrents_list']
-    torrents_list.bind_to_query(query)
+
     await torrents_list.handle_callback(query)
     if torrents_list.selected_index != -1:
         builder = InlineKeyboardBuilder()

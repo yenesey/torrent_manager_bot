@@ -27,7 +27,7 @@ class AbstractItemsList():
         self.from_index = -1
         self.to_index = -1
         self.reload_button = False
-        self.query = None # CallbackQuery
+        self.message = None
 
     def bind_to_query(self, query: CallbackQuery):
         self.query = query
@@ -140,23 +140,19 @@ class AbstractItemsList():
                 and (getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload')) else btn['dummy'],
             btn['next_page'] if self.page_num + 1 < (len(self.items) / self.items_on_page) else btn['dummy']
         )
-        return text, builder.as_markup()
+        return {'text': text, 'reply_markup': builder.as_markup()}
 
     async def answer_message(self, message: Message):
-        text, keyboard_markup = self.text_and_buttons()
         try:
-            await message.answer(text, reply_markup = keyboard_markup)
+            self.message = await message.answer(**self.text_and_buttons())
         except TelegramBadRequest as e:
             logging.info('Message is not modified')
 
     async def refresh(self):
-        if self.query:
-            await self.edit_text(self.query)
-
-    async def edit_text(self, query: CallbackQuery):
-        text, keyboard_markup = self.text_and_buttons()
+        if self.message is None:
+            return
         try:
-            await query.message.edit_text(text, reply_markup = keyboard_markup)
+            await self.message.edit_text(**self.text_and_buttons())
         except TelegramBadRequest as e:
             logging.info('Message is not modified')
 
@@ -188,4 +184,4 @@ class AbstractItemsList():
             self.selected_index = int(query.data)
             self.selected_item = self.items[self.selected_index]
 
-        await self.edit_text(query)
+        await self.refresh()

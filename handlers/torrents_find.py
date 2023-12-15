@@ -64,7 +64,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     await query.answer()     # always answer callback queries, even if you have nothing to say
     state_data = await state.get_data()
     find_list = state_data['find_list']
-    find_list.bind_to_query(query)
+
     await find_list.handle_callback(query)
     if find_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
