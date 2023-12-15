@@ -14,6 +14,7 @@ from handlers import (
     torrserver,
     setup_settings,
 )
+
 from commons.globals import settings
 settings['setup'] = {}
 
@@ -30,11 +31,6 @@ class SecurityMiddleware(BaseMiddleware):
             logging.info('Unknown user: ' + str(user.id))
             return
         return await handler(event, data)
-
-######################################################################
-# @dp.message()
-# async def echo(message: Message):
-    # await message.answer('Enter one of the commands')
 ######################################################################
 
 
@@ -46,11 +42,10 @@ async def main():
 
     bot = Bot(token = settings['telegram_api_token'], parse_mode = 'HTML')
     commands = [
-        BotCommand(command=cmd, description=dsc) for cmd, dsc in 
+        BotCommand(command = cmd, description = dsc) for cmd, dsc in 
         [
-            ('find',  'Find torrents'),
             ('list',  'List torrents'),
-            ('lsts',  'List Torrserver'),
+            ('list_ts',  'List Torrserver'),
             ('setup', 'Settings setup')
         ]
     ]
@@ -63,7 +58,7 @@ async def main():
         torrents_list.router,
         torrserver.router,
         setup_settings.router,
-        torrents_find.router,
+        torrents_find.router
     )
     await dp.start_polling(bot)
 

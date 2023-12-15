@@ -26,6 +26,8 @@ class AbstractItemsList():
         self.selected_item = None
         self.from_index = -1
         self.to_index = -1
+        self.reload_button = False
+        self.message = None
 
     def reload(self):
         pass
@@ -131,22 +133,24 @@ class AbstractItemsList():
         builder.row( # control buttons
             btn['prev_page'] if self.page_num > 0 else btn['dummy'],
             # reload active only when implemented in subclass
-            btn['reload'] if getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload') else btn['dummy'],
+            btn['reload'] if self.reload_button 
+                and (getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload')) else btn['dummy'],
             btn['next_page'] if self.page_num + 1 < (len(self.items) / self.items_on_page) else btn['dummy']
         )
-        return text, builder.as_markup()
+        return {'text': text, 'reply_markup': builder.as_markup()}
 
     async def answer_message(self, message: Message):
-        text, keyboard_markup = self.text_and_buttons()
         try:
-            await message.answer(text, reply_markup = keyboard_markup)
+            self.message = await message.answer(**self.text_and_buttons())
         except TelegramBadRequest as e:
             logging.info('Message is not modified')
 
-    async def edit_text(self, query: CallbackQuery):
-        text, keyboard_markup = self.text_and_buttons()
+    async def refresh(self):
+        self.selected_index = -1
+        if self.message is None:
+            return
         try:
-            await query.message.edit_text(text, reply_markup = keyboard_markup)
+            await self.message.edit_text(**self.text_and_buttons())
         except TelegramBadRequest as e:
             logging.info('Message is not modified')
 
@@ -177,5 +181,6 @@ class AbstractItemsList():
         elif query.data.isdigit():
             self.selected_index = int(query.data)
             self.selected_item = self.items[self.selected_index]
+            return
 
-        await self.edit_text(query)
+        await self.refresh()
