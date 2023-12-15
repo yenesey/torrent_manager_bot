@@ -8,6 +8,7 @@ from commons.bot_list_ui import AbstractItemsList
 from commons.utils import datetime, timestamp, sizeof_fmt, get_file_ext, scantree
 from commons.globals import settings, transmission
 
+user_data = {}
 router = Router()
 
 class TransmissionList(AbstractItemsList):
@@ -122,15 +123,14 @@ class ListStates(StatesGroup):
 @router.message(Command('list'))
 async def cmd_list(message: Message, state: FSMContext):
     torrents_list = TransmissionList()
-    await state.set_state(ListStates.show_list)
-    await state.set_data({'torrents_list': torrents_list})
     await torrents_list.answer_message(message)
+    await state.set_state(ListStates.show_list)
+    user_data[message.from_user.id] = torrents_list
 
 @router.callback_query(StateFilter(ListStates.show_list))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
-    state_data = await state.get_data()
-    torrents_list = state_data['torrents_list']
-
+    await query.answer()
+    torrents_list = user_data[query.from_user.id]
     await torrents_list.handle_callback(query)
     if torrents_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
@@ -149,8 +149,8 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 
 @router.callback_query(StateFilter(ListStates.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
-    state_data = await state.get_data()
-    torrents_list = state_data['torrents_list']
+    await query.answer()
+    torrents_list = user_data[query.from_user.id]
     selected = torrents_list.selected_item
 
     if query.data == 'remove':
@@ -175,9 +175,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     elif query.data == 'return':
         await query.answer('return')
         
-    torrents_list.selected_index = -1
     torrents_list.reload()
     await torrents_list.refresh()
     await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
     await state.set_state(ListStates.show_list)
-

@@ -7,6 +7,7 @@ from commons.bot_list_ui import AbstractItemsList
 from commons.utils import timestamp, sizeof_fmt
 from commons.globals import settings, transmission, torrserver, jackett
 
+user_data = {}
 router = Router()
 
 class FindList(AbstractItemsList):
@@ -45,7 +46,6 @@ class FindStates(StatesGroup):
 async def process_find(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-
     user = message.from_user.id
     trackers_setup = settings['setup'][user]['trackers'] if user in settings['setup'] else set({})
     find_list = FindList(message.text, list(trackers_setup))
@@ -55,16 +55,14 @@ async def process_find(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    await state.set_data({'find_list': find_list})
     await find_list.answer_message(message)
     await state.set_state(FindStates.show_list)
+    user_data[message.from_user.id] = find_list
 
 @router.callback_query(StateFilter(FindStates.show_list))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
-    await query.answer()     # always answer callback queries, even if you have nothing to say
-    state_data = await state.get_data()
-    find_list = state_data['find_list']
-
+    await query.answer()
+    find_list = user_data[query.from_user.id]
     await find_list.handle_callback(query)
     if find_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
@@ -89,8 +87,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 @router.callback_query(StateFilter(FindStates.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer(query.data)
-    state_data = await state.get_data()
-    find_list = state_data['find_list']
+    find_list = user_data[query.from_user.id]
     selected = find_list.selected_item
 
     if query.data == 'download':
@@ -118,7 +115,6 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     elif query.data == 'open_page':
         await query.bot.send_message(query.from_user.id, selected['Details'])
  
-    find_list.selected_index = -1
     await find_list.refresh()
     await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
     await state.set_state(FindStates.show_list)

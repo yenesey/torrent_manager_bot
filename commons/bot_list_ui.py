@@ -29,9 +29,6 @@ class AbstractItemsList():
         self.reload_button = False
         self.message = None
 
-    def bind_to_query(self, query: CallbackQuery):
-        self.query = query
-
     def reload(self):
         pass
 
@@ -149,6 +146,7 @@ class AbstractItemsList():
             logging.info('Message is not modified')
 
     async def refresh(self):
+        self.selected_index = -1
         if self.message is None:
             return
         try:
@@ -183,5 +181,6 @@ class AbstractItemsList():
         elif query.data.isdigit():
             self.selected_index = int(query.data)
             self.selected_item = self.items[self.selected_index]
+            return
 
         await self.refresh()
