@@ -1,5 +1,7 @@
-from datetime import datetime
 import os
+from datetime import datetime
+import requests
+from lxml import html
 
 def timestamp():
     return str( int(datetime.utcnow().timestamp()) )
@@ -21,3 +23,10 @@ def scantree(path, recursive = False):
             yield from scantree(entry.path, recursive)
         else:
             yield entry
+
+def get_etree(url):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.9; rv:45.0) Gecko/20100101 Firefox/45.0'
+    }
+    content = requests.get(url, headers = headers)
+    return html.fromstring(content.text)

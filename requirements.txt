@@ -2,3 +2,4 @@ aiogram==3.2.0
 transmission_rpc==3.4.0
 psutil==5.9.4
 requests==2.27.1
+lxml==4.9.3

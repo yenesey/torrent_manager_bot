@@ -4,7 +4,7 @@ from io import BytesIO
 
 from commons.aio_modules import *
 from commons.bot_list_ui import AbstractItemsList
-from commons.utils import timestamp, sizeof_fmt
+from commons.utils import timestamp, sizeof_fmt, get_etree
 from commons.globals import settings, transmission, torrserver, jackett
 
 user_data = {}
@@ -100,6 +100,18 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         selected['transmission'] = True
 
     elif query.data == 'torrserver':
+        try:
+            tree = get_etree(selected['Details'])
+            poster = tree.xpath("//var[@class='postImg postImgAligned img-right']") # rutracker
+            if len(poster) > 0:
+                selected['Poster'] = poster[0].attrib['title']
+            else:
+                poster = tree.xpath('//table[@id="details"]/tr/td[2]/img')  # rutor
+                if len(poster) > 0:
+                    selected['Poster'] = poster[0].attrib['src']          
+        except Exception as e:
+            logging.info(e)
+
         res = torrserver.add_item(selected)
         if res:
             selected['torrserver'] = True

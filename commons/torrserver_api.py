@@ -21,7 +21,8 @@ class Torrserver():
             'action' : 'add',
             'link' : item['Link'] or item['MagnetUri'],
             'title' : item['Title'],
-            'poster': item['Poster']
+            'poster': item['Poster'],
+            'save_to_db': True
         }
         res = requests.post(self.url, json = json)
         return res.status_code == 200
