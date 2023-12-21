@@ -1,4 +1,4 @@
-# torrent_manager_bot
+# Torrent manager bot
 
 Bot for managing torrents on your NAS(PC) via Telegram
 
@@ -8,9 +8,13 @@ Integrates with:
 - [Torrserver](https://github.com/YouROK/TorrServer) - instant watch
 
 ### Installation
+- python 3.6 or newer is required
 - download and unpack [zip](https://github.com/yenesey/torrent_manager_bot/zipball/master/)
-- pip install -r requirements.txt
-- python bot.py
+- \>cd <unpacked_dir>
+- \>pip install -r requirements.txt
+
+### Run
+- \>python bot.py
 
 ### settings.json file example
 ```json
