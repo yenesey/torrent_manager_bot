@@ -52,25 +52,31 @@ class TransmissionList(AbstractItemsList):
         attributes = ('id', 'name', 'percentDone', 'status', 'totalSize', 'uploadRatio', 'addedDate')
         torrents_list = [{ key : getattr(tr, key) for key in attributes } for tr in torrents]
 
+        ext_counter = Counter()
         torrent_names = set()
         for i, tr in enumerate(torrents):
+            ext_counter.clear()
             item = torrents_list[i]
             item['is_dir'] = len(tr.files()) > 1
             item['date'] = datetime.fromtimestamp(item.pop('addedDate'))
             item['size'] = item.pop('totalSize')
-            ext_dict = Counter()
             for file in tr.files():
-                ext_dict[ get_file_ext(file.name) ] += 1
-            item['ext'] = ext_dict and ext_dict.most_common()[0][0] or '' # most frequent extension (for directory)
+                ext_counter[ get_file_ext(file.name) ] += 1
+            ext = ext_counter.most_common()
+            if len(ext) > 0:    
+                item['ext'] = ext[0][0] # most frequent extension (for directory)
+                item['count'] = ext[0][1] # count for frequent extension (for directory)
+
             torrent_names.add(item['name'])
 
         for entry in scantree(settings['download_dir']):
             if not entry.name in torrent_names:
-                ext_dict = Counter()
+                ext_counter.clear()
                 size = 0
                 for file in scantree(entry.path, recursive = True) if entry.is_dir() else [entry]:
-                    ext_dict[ get_file_ext(file.name) ] += 1
+                    ext_counter[ get_file_ext(file.name) ] += 1
                     size += file.stat().st_size
+                ext = ext_counter.most_common()
 
                 torrents_list.append({
                     'id' : None,
@@ -81,7 +87,8 @@ class TransmissionList(AbstractItemsList):
                     'is_dir': entry.is_dir(),
                     'date' : datetime.fromtimestamp(entry.stat().st_ctime),
                     'size' : size,
-                    'ext': ext_dict and ext_dict.most_common()[0][0] or '' # most frequent extension (for directory)
+                    'ext': ext[0][0] if len(ext) else None, # most frequent extension (for directory)
+                    'count': ext[0][1] if len(ext) else None
                 })
 
         self.items_list = torrents_list
@@ -90,16 +97,17 @@ class TransmissionList(AbstractItemsList):
     def get_item_str(self, i : int) -> str:
         item = self.items[i]
         key_map = {
-            'name' : lambda x: x,
-            'size' : lambda x: '[' + sizeof_fmt(x) + ']',
-            'percentDone' : lambda x: '[' + str(round(x * 100, 2)) + '%]',
-            'status' : lambda x: '[' + x + ']',
-            'uploadRatio' : lambda x: 'R[' + str(round(x, 2)) + ']'
+            'count' : lambda item: '[' + str(item['count']) + ' ' + item['ext'] + ']' if item['count'] > 1 else '',
+            'name' : lambda item: item['name'],
+            'size' : lambda item: '[' + sizeof_fmt(item['size']) + ']',
+            'percentDone' : lambda item: '[' + str(round(item['percentDone'] * 100, 2)) + '%]',
+            'status' : lambda item: '[' + item['status'] + ']',
+            'uploadRatio' : lambda item: 'R[' + str(round(item['uploadRatio'], 2)) + ']'
         }
         result = ''
-        for key in key_map.keys():
+        for key in key_map:
             if item[key]:
-                result += key_map[key]( item[key] ) + ' '
+                result += key_map[key]( item ) + ' '
         
         return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + result
     
