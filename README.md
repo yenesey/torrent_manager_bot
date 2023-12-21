@@ -1,9 +1,16 @@
 # torrent_manager_bot
 
-This simple script allows you to manage torrents on your NAS (or PC) remotedly via Telegram bot API
+Bot for managing torrents on your NAS(PC) via Telegram
 
-It's integrates with [Transmission](https://github.com/transmission/transmission) to manage downloads, and [Jackett](https://github.com/Jackett/Jackett) to seek torrents
+Integrates with:
+- [Transmission](https://github.com/transmission/transmission) - manage downloads
+- [Jackett](https://github.com/Jackett/Jackett) - search for torrents
+- [Torrserver](https://github.com/YouROK/TorrServer) - instant watch
 
+### Installation
+- download and unpack [zip](https://github.com/yenesey/torrent_manager_bot/zipball/master/)
+- pip install -r requirements.txt
+- python bot.py
 
 ### settings.json file example
 ```json
