@@ -1,4 +1,4 @@
-# Torrent manager bot
+# Torrents manager bot
 
 Bot for managing torrents on your NAS(PC) via Telegram
 
@@ -12,11 +12,7 @@ Integrates with:
 - download and unpack [zip](https://github.com/yenesey/torrent_manager_bot/zipball/master/)
 - \>cd <unpacked_dir>
 - \>pip install -r requirements.txt
-
-### Run
-- \>python bot.py
-
-### settings.json file example
+- create and fullfill settings.json by example:
 ```json
 {
     "jackett" : {
@@ -37,3 +33,8 @@ Integrates with:
     "download_dir" : ""
 }
 ```
+- don't forget to obtain (in @BotFather) and setup your own telegram_api_token
+
+### Run
+- \>python bot.py
+
