@@ -37,4 +37,5 @@ Integrates with:
 
 ### Run
 - \>python bot.py
+- first run with empty "users_list" in config, you'll see ID in output on any interaction with bot, fill "users_list" and restart bot.
 
