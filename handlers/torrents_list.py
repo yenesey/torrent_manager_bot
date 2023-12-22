@@ -15,7 +15,7 @@ class TransmissionList(AbstractItemsList):
 
     def __init__(self) -> None:
         super().__init__()
-        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir'), ('uploadRatio', 'r')]
+        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir')] #, ('uploadRatio', 'r')
         self.sort_order = [('date', 0)]
         self.filter_key = 'status'
         self.stats = None
@@ -43,8 +43,7 @@ class TransmissionList(AbstractItemsList):
                 return file_types[tp]['icon']
         return file_types['other']['icon']
 
-    def get_icon(self, item) -> str: 
-        # list item must have: { 'is_dir' : bool, 'ext' : str }
+    def get_icon(self, item) -> str:
         return (item['is_dir'] and '📁' or '') + self.get_ext_icon( item['ext'] )
 
     def reload(self):
@@ -63,9 +62,8 @@ class TransmissionList(AbstractItemsList):
             for file in tr.files():
                 ext_counter[ get_file_ext(file.name) ] += 1
             ext = ext_counter.most_common()
-            if len(ext) > 0:    
-                item['ext'] = ext[0][0] # most frequent extension (for directory)
-                item['count'] = ext[0][1] # count for frequent extension (for directory)
+            item['ext'] = ext[0][0] if len(ext) else None  # most frequent extension (for directory)
+            item['count'] = ext[0][1] if len(ext) else None  # count for frequent extension (for directory)
 
             torrent_names.add(item['name'])
 
@@ -87,7 +85,7 @@ class TransmissionList(AbstractItemsList):
                     'is_dir': entry.is_dir(),
                     'date' : datetime.fromtimestamp(entry.stat().st_ctime),
                     'size' : size,
-                    'ext': ext[0][0] if len(ext) else None, # most frequent extension (for directory)
+                    'ext': ext[0][0] if len(ext) else None,
                     'count': ext[0][1] if len(ext) else None
                 })
 
@@ -101,10 +99,10 @@ class TransmissionList(AbstractItemsList):
             'count' : lambda item: '[' + str(item['count']) + ' *.' + item['ext'] + ']' if item['count'] > 1 else '',
             'size' : lambda item: '[' + sizeof_fmt(item['size']) + ']',
             'percentDone' : lambda item: '[' + str(round(item['percentDone'] * 100, 2)) + '%]',
+            'uploadRatio' : lambda item: '[' + str(round(item['uploadRatio'], 2)).rstrip('0').rstrip('.') + 'x]',
             'status' : lambda item: '[' + item['status'] + ']',
-            'uploadRatio' : lambda item: '[' + str(round(item['uploadRatio'], 2)).rstrip('0').rstrip('.') + 'x]'
         }
-        result = ' '.join(key_map[key]( item ) for key in key_map)     
+        result = ' '.join(key_map[key]( item ) for key in key_map if item[key])     
         return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + result
     
     def get_footer_str(self) -> str:
