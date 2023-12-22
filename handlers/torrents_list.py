@@ -38,9 +38,11 @@ class TransmissionList(AbstractItemsList):
                 'icon' : '📄'
             }
         }
-        for tp in file_types:
-            if ext.lower() in file_types[tp]['extension']:
-                return file_types[tp]['icon']
+        if ext is not None:
+            ext = ext.lower()
+            for tp in file_types:
+                if ext in file_types[tp]['extension']:
+                    return file_types[tp]['icon']
         return file_types['other']['icon']
 
     def get_icon(self, item) -> str:
