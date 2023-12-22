@@ -97,18 +97,14 @@ class TransmissionList(AbstractItemsList):
     def get_item_str(self, i : int) -> str:
         item = self.items[i]
         key_map = {
-            'count' : lambda item: '[' + str(item['count']) + ' ' + item['ext'] + ']' if item['count'] > 1 else '',
             'name' : lambda item: item['name'],
+            'count' : lambda item: '[' + str(item['count']) + ' *.' + item['ext'] + ']' if item['count'] > 1 else '',
             'size' : lambda item: '[' + sizeof_fmt(item['size']) + ']',
             'percentDone' : lambda item: '[' + str(round(item['percentDone'] * 100, 2)) + '%]',
             'status' : lambda item: '[' + item['status'] + ']',
-            'uploadRatio' : lambda item: 'R[' + str(round(item['uploadRatio'], 2)) + ']'
+            'uploadRatio' : lambda item: '[' + str(round(item['uploadRatio'], 2)).rstrip('0').rstrip('.') + 'x]'
         }
-        result = ''
-        for key in key_map:
-            if item[key]:
-                result += key_map[key]( item ) + ' '
-        
+        result = ' '.join(key_map[key]( item ) for key in key_map)     
         return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + result
     
     def get_footer_str(self) -> str:
