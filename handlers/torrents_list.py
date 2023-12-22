@@ -13,6 +13,20 @@ router = Router()
 
 class TransmissionList(AbstractItemsList):
 
+    ext_icons = {
+        'avi': '🎬', 
+        'mkv': '🎬', 
+        'mp4': '🎬', 
+        'm4v': '🎬', 
+        'mov': '🎬', 
+        'bdmv': '🎬', 
+        'vob': '🎬',
+        'mp3': '🎧', 
+        'wav': '🎧', 
+        'm3u': '🎧', 
+        'ogg': '🎧'
+    }
+
     def __init__(self) -> None:
         super().__init__()
         self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir')] #, ('uploadRatio', 'r')
@@ -22,31 +36,9 @@ class TransmissionList(AbstractItemsList):
         self.reload_button = True
         self.reload()
     
-    @staticmethod
-    def get_ext_icon(ext):
-        file_types = {
-            'video' : {
-                'extension' : ['avi', 'mkv', 'mp4', 'm4v', 'mov', 'bdmv', 'vob'],
-                'icon' : '🎬'
-            },
-            'music' :{
-                'extension' : ['mp3', 'wav', 'm3u', 'ogg'],
-                'icon' : '🎧'
-            },
-            'other' : {
-                'extension' : [],
-                'icon' : '📄'
-            }
-        }
-        if ext is not None:
-            ext = ext.lower()
-            for tp in file_types:
-                if ext in file_types[tp]['extension']:
-                    return file_types[tp]['icon']
-        return file_types['other']['icon']
-
     def get_icon(self, item) -> str:
-        return (item['is_dir'] and '📁' or '') + self.get_ext_icon( item['ext'] )
+        ext = item['ext'].lower() if item['ext'] else ''
+        return (item['is_dir'] and '📁' or '') + (ext in self.ext_icons and self.ext_icons[ext] or '📄')      
 
     def reload(self):
         torrents = transmission.get_torrents()
