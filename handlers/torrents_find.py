@@ -31,7 +31,7 @@ class FindList(AbstractItemsList):
 
     def get_item_str(self, i : int):
         item = self.items[i]
-        return '<b>' + str(i) + '.</b> ' + item['Title'] + \
+        return '<b>' + str(i + 1) + '.</b> ' + item['Title'] + \
             ' [' + sizeof_fmt(item['Size']) + '] [' + item['TrackerId'] + ']' + \
             ' [' +str(item['Seeders']) + 's/' + str(item['Peers']) + 'p]' +\
             (' [downloading]' if item['transmission'] else '') +\
@@ -102,13 +102,19 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     elif query.data == 'torrserver':
         try:
             tree = get_etree(selected['Details'])
-            poster = tree.xpath("//var[@class='postImg postImgAligned img-right']") # rutracker
+            poster = tree.xpath('//var[@class="postImg postImgAligned img-right"]') # rutracker
             if len(poster) > 0:
                 selected['Poster'] = poster[0].attrib['title']
             else:
                 poster = tree.xpath('//table[@id="details"]/tr/td[2]/img')  # rutor
                 if len(poster) > 0:
-                    selected['Poster'] = poster[0].attrib['src']          
+                    selected['Poster'] = poster[0].attrib['src']
+                else:
+                    poster = tree.xpath('//table[@id="details"]//img')
+                    if len(poster) > 0:
+                        selected['Poster'] = poster[0].attrib['src']
+
+
         except Exception as e:
             logging.info(e)
 
