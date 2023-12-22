@@ -57,11 +57,11 @@ class AbstractItemsList():
                 cls.append(item[key])
         return cls
 
-    def get_item_str(self) -> str:
+    def get_item_str(self, i : int) -> str:
         raise NotImplementedError()
 
     def get_header_str(self) -> str:
-        return '<b>results: ' + str(self.from_index) + '-' + str(self.to_index - 1) + ' of ' + str(len(self.items)-1) + '</b>'
+        return '<b>results: ' + str(self.from_index + 1) + '-' + str(self.to_index) + ' of ' + str(len(self.items)) + '</b>'
 
     def get_footer_str(self) -> str:
         return ''
@@ -101,7 +101,7 @@ class AbstractItemsList():
         text = self.get_header_str() + hr
         for i in range(self.from_index, self.to_index):
             text = text + ('\n' if i > self.from_index else '') + self.get_item_str(i) + ('\n' if i < self.to_index -1 else '')
-            row_btns.append( InlineKeyboardButton(text = str(i), callback_data = str(i)) )
+            row_btns.append( InlineKeyboardButton(text = str(i + 1), callback_data = str(i)) )
         footer_str = self.get_footer_str()
         if footer_str: text = text + hr + footer_str
 

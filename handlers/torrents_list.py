@@ -103,7 +103,7 @@ class TransmissionList(AbstractItemsList):
             'status' : lambda item: '[' + item['status'] + ']',
         }
         result = ' '.join(key_map[key]( item ) for key in key_map if item[key])     
-        return '<b>' + str(i) + '</b>. ' + self.get_icon(item) + result
+        return '<b>' + str(i + 1) + '</b>. ' + self.get_icon(item) + result
     
     def get_footer_str(self) -> str:
         stats = {

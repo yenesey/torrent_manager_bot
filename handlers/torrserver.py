@@ -20,7 +20,7 @@ class TorrserverList(AbstractItemsList):
 
     def get_item_str(self, i : int):
         item = self.items[i]
-        return '<b>' + str(i) + '</b>. ' + item['name'] + ' [' + sizeof_fmt(item['size']) + ']'
+        return '<b>' + str(i + 1) + '</b>. ' + item['name'] + ' [' + sizeof_fmt(item['size']) + ']'
 
 class TorrserverStates(StatesGroup):
     show_list = State()
