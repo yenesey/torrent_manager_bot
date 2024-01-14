@@ -20,6 +20,8 @@ class AbstractItemsList():
         self.filter_key = ''  # items is classified by given key, that allow filter items (todo: multiple keys)
         self.filter = set()   # set() -- toggle filters by classification (classify_items)
 
+        self.ext_visible = False
+
         self.page_num = 0
         self.items_on_page = 4
         self.selected_index = -1
@@ -61,7 +63,8 @@ class AbstractItemsList():
         raise NotImplementedError()
 
     def get_header_str(self) -> str:
-        return '<b>results: ' + str(self.from_index + 1) + '-' + str(self.to_index) + ' of ' + str(len(self.items)) + '</b>'
+        return '<b>results: ' + str(self.from_index + 1) + '-' + str(self.to_index) + ' of ' + str(len(self.items)) +\
+            (' [' + ','.join(self.filter) + ']' if len(self.filter) > 0 else '') +'</b>'
 
     def get_footer_str(self) -> str:
         return ''
@@ -92,6 +95,12 @@ class AbstractItemsList():
             return True
         return False
 
+    def show_ext(self):
+        self.ext_visible = True
+
+    def hide_ext(self):
+        self.ext_visible = False
+
     def text_and_buttons(self) -> tuple[str, ReplyKeyboardMarkup]:
         hr = '\n<b>⸻⸻⸻</b>\n'
         self.set_page_bounds()
@@ -109,7 +118,7 @@ class AbstractItemsList():
         builder.row(*row_btns) 
         
         # sort buttons
-        if len(self.sort_keys) > 0:
+        if self.ext_visible and len(self.sort_keys) > 0:
             row_btns = []
             for item in self.sort_keys:
                 key, alias = item if type(item) == tuple else (item, item)
@@ -119,7 +128,7 @@ class AbstractItemsList():
                 row_btns.append( InlineKeyboardButton(text = btn_text, callback_data = '#order_by#' + key ) )
             builder.row(*row_btns) 
 
-        if self.filter_key:
+        if  self.ext_visible and self.filter_key:
             builder.row(*[
                 InlineKeyboardButton(
                     text = ('✓' if key in self.filter else '') + key, 
@@ -128,13 +137,14 @@ class AbstractItemsList():
             ])
 
         # page control buttons        
-        btn_data = {'prev_page': '⬅', 'next_page': '➡', 'reload': '🔁', 'dummy': '-'}
+        btn_data = {'prev_page': '⬅', 'next_page': '➡', 'show_ext': '⬇', 'hide_ext': '⬆', 'dummy': '-'}
         btn = { key: InlineKeyboardButton(text = btn_data[key], callback_data = key) for key in btn_data }
         builder.row( # control buttons
             btn['prev_page'] if self.page_num > 0 else btn['dummy'],
             # reload active only when implemented in subclass
-            btn['reload'] if self.reload_button 
-                and (getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload')) else btn['dummy'],
+            # and (getattr(self, 'reload') != getattr(super(self.__class__, self), 'reload')) else btn['dummy'],
+            btn['hide_ext'] if self.ext_visible else btn['show_ext'],
+                
             btn['next_page'] if self.page_num + 1 < (len(self.items) / self.items_on_page) else btn['dummy']
         )
         return {'text': text, 'reply_markup': builder.as_markup()}
@@ -156,7 +166,7 @@ class AbstractItemsList():
 
     async def handle_callback(self, query: CallbackQuery):
         await query.answer(query.data)
-        if query.data in ['next_page', 'prev_page', 'reload']: 
+        if query.data in ['next_page', 'prev_page', 'show_ext', 'hide_ext']: 
             getattr(self, query.data)() # call proper method
 
         elif query.data[:10] == '#order_by#':

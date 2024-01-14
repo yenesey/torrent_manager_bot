@@ -29,7 +29,7 @@ class TransmissionList(AbstractItemsList):
 
     def __init__(self) -> None:
         super().__init__()
-        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir')] #, ('uploadRatio', 'r')
+        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir'), ('uploadRatio', 'rtx')] 
         self.sort_order = [('date', 0)]
         self.filter_key = 'status'
         self.stats = None
@@ -175,3 +175,12 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
     await torrents_list.refresh()
     await query.bot.delete_message(chat_id = query.from_user.id, message_id = query.message.message_id)
     await state.set_state(ListStates.show_list)
+
+
+
+async def run_periodically():
+    while True:
+        # Call print_time
+        print_time()
+        # Sleep for 10 seconds
+        await asyncio.sleep(10)

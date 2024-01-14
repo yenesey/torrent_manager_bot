@@ -48,7 +48,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
         return
     
     await query.bot.send_message(user, 'Confirmed!', reply_markup = ReplyKeyboardRemove() )
-    await state.finish()
+    await state.clear()
 
 @router.callback_query(StateFilter(Setup.setup_trackers))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
