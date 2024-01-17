@@ -2,6 +2,8 @@ import psutil
 import os
 from collections import Counter
 from shutil import rmtree
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import logging
 
 from commons.aio_modules import *
 from commons.bot_list_ui import AbstractItemsList
@@ -10,6 +12,7 @@ from commons.globals import settings, transmission
 
 user_data = {}
 router = Router()
+scheduler = AsyncIOScheduler()
 
 class TransmissionList(AbstractItemsList):
 
@@ -29,7 +32,7 @@ class TransmissionList(AbstractItemsList):
 
     def __init__(self) -> None:
         super().__init__()
-        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir')] #, ('uploadRatio', 'r')
+        self.sort_keys = ['date', 'name', 'size', ('is_dir', 'dir'), ('uploadRatio', 'rtx')] 
         self.sort_order = [('date', 0)]
         self.filter_key = 'status'
         self.stats = None
@@ -116,17 +119,36 @@ class ListStates(StatesGroup):
     show_list = State()
     select_action = State()
 
+
+async def update_list_auto():
+    for user_id in user_data:
+        state = await user_data[user_id]['state'].get_state()
+        if state == ListStates.show_list:
+            torrents_list = user_data[user_id]['torrents_list']
+            torrents_list.reload()
+            await torrents_list.refresh()
+
+
 @router.message(Command('list'))
 async def cmd_list(message: Message, state: FSMContext):
+    global scheduler
+
     torrents_list = TransmissionList()
     await torrents_list.answer_message(message)
     await state.set_state(ListStates.show_list)
-    user_data[message.from_user.id] = torrents_list
+    user_data[message.from_user.id] = {
+        'torrents_list': torrents_list,
+        'state': state
+    }
+    if not scheduler.running:
+        logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
+        scheduler.add_job(update_list_auto, trigger = 'interval', seconds = 10)
+        scheduler.start()
 
 @router.callback_query(StateFilter(ListStates.show_list))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer()
-    torrents_list = user_data[query.from_user.id]
+    torrents_list = user_data[query.from_user.id]['torrents_list']
     await torrents_list.handle_callback(query)
     if torrents_list.selected_index != -1:
         builder = InlineKeyboardBuilder()
@@ -146,7 +168,7 @@ async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMCont
 @router.callback_query(StateFilter(ListStates.select_action))
 async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     await query.answer()
-    torrents_list = user_data[query.from_user.id]
+    torrents_list = user_data[query.from_user.id]['torrents_list']
     selected = torrents_list.selected_item
 
     if query.data == 'remove':
