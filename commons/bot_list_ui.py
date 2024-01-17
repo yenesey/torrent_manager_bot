@@ -159,7 +159,8 @@ class AbstractItemsList():
         try:
             await self.message.edit_text(**self.text_and_buttons())
         except TelegramBadRequest as e:
-            logging.info('Message is not modified')
+            pass
+            # logging.info('Message is not modified')
 
     async def handle_callback(self, query: CallbackQuery):
         await query.answer(query.data)

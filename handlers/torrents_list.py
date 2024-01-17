@@ -11,8 +11,8 @@ from commons.utils import datetime, timestamp, sizeof_fmt, get_file_ext, scantre
 from commons.globals import settings, transmission
 
 user_data = {}
-
 router = Router()
+scheduler = AsyncIOScheduler()
 
 class TransmissionList(AbstractItemsList):
 
@@ -131,6 +131,8 @@ async def update_list_auto():
 
 @router.message(Command('list'))
 async def cmd_list(message: Message, state: FSMContext):
+    global scheduler
+
     torrents_list = TransmissionList()
     await torrents_list.answer_message(message)
     await state.set_state(ListStates.show_list)
@@ -138,10 +140,9 @@ async def cmd_list(message: Message, state: FSMContext):
         'torrents_list': torrents_list,
         'state': state
     }
-    scheduler = AsyncIOScheduler()
-    logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
     if not scheduler.running:
-        scheduler.add_job(update_list_auto, trigger='interval', seconds=10 )
+        logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
+        scheduler.add_job(update_list_auto, trigger = 'interval', seconds = 10)
         scheduler.start()
 
 @router.callback_query(StateFilter(ListStates.show_list))
