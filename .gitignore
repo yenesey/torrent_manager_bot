@@ -1,3 +1,4 @@
-settings.json
+.venv
 __pycache__
 install_service_systemd.sh
+settings.json
